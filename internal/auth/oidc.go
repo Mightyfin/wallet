@@ -41,7 +41,7 @@ func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (Principal, error
 	if err := token.Claims(&claims); err != nil {
 		return Principal{}, fmt.Errorf("%w: claims rejected", ErrInvalidToken)
 	}
-	if claims.Subject == "" || claims.TenantID == "" || claims.Environment != v.environment {
+	if claims.Subject == "" || claims.Environment != v.environment {
 		return Principal{}, ErrInvalidToken
 	}
 	p := Principal{Subject: claims.Subject, TenantID: claims.TenantID, ApplicationID: claims.ApplicationID, Environment: claims.Environment, Scopes: map[string]struct{}{}, Roles: map[string]struct{}{}}
@@ -50,6 +50,9 @@ func (v *OIDCVerifier) Verify(ctx context.Context, raw string) (Principal, error
 	}
 	for _, role := range claims.RealmAccess.Roles {
 		p.Roles[role] = struct{}{}
+	}
+	if p.TenantID == "" && !p.HasRole("platform-tenant-delegator") {
+		return Principal{}, ErrInvalidToken
 	}
 	return p, nil
 }

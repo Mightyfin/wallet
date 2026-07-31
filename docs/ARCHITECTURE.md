@@ -25,6 +25,9 @@ ledger events; products do not change integration.
 - Generic journal posting is internal-only; partner applications receive capability-specific APIs.
 - Manual adjustments use a separate maker-checker workflow and are never direct database edits.
 - External rail callbacks are authenticated, deduplicated and reconciled before final posting.
+- Multi-tenant platform workers may assert `X-Acting-Tenant-Id` and
+  `X-Acting-Application-Id` only when their OIDC service account has the dedicated
+  `platform-tenant-delegator` role. Tenant-bearing partner tokens cannot use delegation headers.
 
 ## Initial posting rules
 

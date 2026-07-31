@@ -37,6 +37,19 @@ func authenticate(verifier auth.Verifier, disabled bool, next http.Handler) http
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
+		actingTenant := strings.TrimSpace(r.Header.Get("X-Acting-Tenant-Id"))
+		actingApplication := strings.TrimSpace(r.Header.Get("X-Acting-Application-Id"))
+		if p.TenantID == "" {
+			if !p.HasRole("platform-tenant-delegator") || actingTenant == "" || actingApplication == "" || len(actingTenant) > 64 || len(actingApplication) > 64 {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "delegation_forbidden"})
+				return
+			}
+			p.TenantID = actingTenant
+			p.ApplicationID = actingApplication
+		} else if actingTenant != "" || actingApplication != "" {
+			writeJSON(w, http.StatusForbidden, map[string]string{"error": "delegation_forbidden"})
+			return
+		}
 		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, p)))
 	})
 }

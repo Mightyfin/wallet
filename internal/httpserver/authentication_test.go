@@ -57,3 +57,34 @@ func TestScopeAuthorization(t *testing.T) {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
 }
+
+func TestDelegatedWorkloadMustHaveRoleAndBothActingClaims(t *testing.T) {
+	base := auth.Principal{Subject: "efaas-backend", Environment: "production", Scopes: map[string]struct{}{"wallet.transfer": {}}, Roles: map[string]struct{}{"platform-tenant-delegator": {}}}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		p := principal(r)
+		if p.TenantID != "tenant-a" || p.ApplicationID != "app-a" {
+			t.Fatalf("delegation missing: %#v", p)
+		}
+		w.WriteHeader(http.StatusNoContent)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/transfers", nil)
+	request.Header.Set("Authorization", "Bearer accepted")
+	request.Header.Set("X-Acting-Tenant-Id", "tenant-a")
+	request.Header.Set("X-Acting-Application-Id", "app-a")
+	response := httptest.NewRecorder()
+	authenticate(fakeVerifier{principal: base}, false, next).ServeHTTP(response, request)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
+	}
+
+	base.TenantID = "tenant-direct"
+	request = httptest.NewRequest(http.MethodPost, "/v1/transfers", nil)
+	request.Header.Set("Authorization", "Bearer accepted")
+	request.Header.Set("X-Acting-Tenant-Id", "tenant-a")
+	request.Header.Set("X-Acting-Application-Id", "app-a")
+	response = httptest.NewRecorder()
+	authenticate(fakeVerifier{principal: base}, false, next).ServeHTTP(response, request)
+	if response.Code != http.StatusForbidden {
+		t.Fatalf("tenant token spoof status=%d", response.Code)
+	}
+}
