@@ -1,0 +1,36 @@
+name: wallet-ledger-ci
+on:
+  pull_request:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: wallet_ledger_test
+          POSTGRES_USER: wallet
+          POSTGRES_PASSWORD: test-only
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U wallet -d wallet_ledger_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
+    env:
+      WALLET_LEDGER_ENVIRONMENT: local
+      WALLET_LEDGER_AUTH_MODE: disabled
+      WALLET_LEDGER_DATABASE_URL: postgres://wallet:test-only@127.0.0.1:5432/wallet_ledger_test?sslmode=disable
+      WALLET_LEDGER_TEST_DATABASE_URL: postgres://wallet:test-only@127.0.0.1:5432/wallet_ledger_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: {go-version: '1.25.x', cache: true}
+      - run: gofmt -w ./cmd ./internal && git diff --exit-code
+      - run: go run ./cmd/migrate
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      - run: docker build -t wallet-ledger:test .

@@ -1,0 +1,41 @@
+services:
+  postgres:
+    image: postgres:17-alpine@sha256:742f40ea20b9ff2ff31db5458d127452988a2164df9e17441e191f3b72252193
+    environment:
+      POSTGRES_DB: wallet_ledger
+      POSTGRES_USER: wallet
+      POSTGRES_PASSWORD: local-wallet-only
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U wallet -d wallet_ledger"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    volumes: [wallet-ledger-data:/var/lib/postgresql/data]
+
+  migrate:
+    build: .
+    entrypoint: ["/wallet-ledger-migrate"]
+    environment: &runtime
+      WALLET_LEDGER_ENVIRONMENT: local
+      WALLET_LEDGER_HTTP_ADDRESS: ":8080"
+      WALLET_LEDGER_DATABASE_URL: postgres://wallet:local-wallet-only@postgres:5432/wallet_ledger?sslmode=disable
+      WALLET_LEDGER_OIDC_ISSUER: http://127.0.0.1.nip.io:18081/realms/mightyfin-sandbox
+      WALLET_LEDGER_OIDC_AUDIENCE: mightyfin-wallet-ledger
+      WALLET_LEDGER_AUTH_MODE: disabled
+    depends_on:
+      postgres: { condition: service_healthy }
+
+  api:
+    build: .
+    environment: *runtime
+    ports: ["127.0.0.1:18082:8080"]
+    depends_on:
+      migrate: { condition: service_completed_successfully }
+    healthcheck:
+      test: ["CMD", "/wallet-ledger-api", "healthcheck"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+volumes:
+  wallet-ledger-data: {}
