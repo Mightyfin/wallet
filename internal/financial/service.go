@@ -43,6 +43,7 @@ type Wallet struct {
 	Currency                     string `json:"currency"`
 	Status                       string `json:"status"`
 	CreatedBy, SourceApplication string `json:"-"`
+	IdempotencyKey               string `json:"-"`
 }
 
 type Balance struct {
@@ -97,14 +98,14 @@ func (s *Service) CreateLegalEntity(ctx context.Context, name, country, currency
 }
 
 func (s *Service) CreateWallet(ctx context.Context, wallet Wallet) (Wallet, error) {
-	wallet.ID, wallet.Currency, wallet.Status = newID("wal"), strings.ToUpper(strings.TrimSpace(wallet.Currency)), "pending"
+	wallet.Currency, wallet.Status = strings.ToUpper(strings.TrimSpace(wallet.Currency)), "pending"
 	if wallet.CreatedBy == "" {
 		wallet.CreatedBy = "system:wallet-provisioning"
 	}
 	if wallet.SourceApplication == "" {
 		wallet.SourceApplication = "wallet-ledger"
 	}
-	if wallet.LegalEntityID == "" || wallet.TenantID == "" || wallet.OwnerID == "" || len(wallet.Currency) != 3 {
+	if wallet.LegalEntityID == "" || wallet.TenantID == "" || wallet.OwnerID == "" || len(wallet.Currency) != 3 || len(wallet.IdempotencyKey) < 8 || len(wallet.IdempotencyKey) > 128 {
 		return Wallet{}, fmt.Errorf("invalid wallet: %w", ErrConflict)
 	}
 	switch wallet.OwnerType {
@@ -112,6 +113,23 @@ func (s *Service) CreateWallet(ctx context.Context, wallet Wallet) (Wallet, erro
 	default:
 		return Wallet{}, fmt.Errorf("invalid owner type: %w", ErrConflict)
 	}
+	requestHash := hashRequest(wallet.LegalEntityID, wallet.OwnerType, wallet.OwnerID, wallet.Currency)
+	var existing Wallet
+	var existingHash string
+	err := s.pool.QueryRow(ctx, `SELECT w.public_id,le.public_id,w.tenant_id,w.owner_type,w.owner_id,w.currency,w.status,w.creation_request_hash
+		FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id
+		WHERE w.tenant_id=$1 AND w.source_application=$2 AND w.creation_idempotency_key=$3`, wallet.TenantID, wallet.SourceApplication, wallet.IdempotencyKey).
+		Scan(&existing.ID, &existing.LegalEntityID, &existing.TenantID, &existing.OwnerType, &existing.OwnerID, &existing.Currency, &existing.Status, &existingHash)
+	if err == nil {
+		if existingHash != requestHash {
+			return Wallet{}, ErrConflict
+		}
+		return existing, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Wallet{}, err
+	}
+	wallet.ID = newID("wal")
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return Wallet{}, err
@@ -125,8 +143,8 @@ func (s *Service) CreateWallet(ctx context.Context, wallet Wallet) (Wallet, erro
 		return Wallet{}, err
 	}
 	var walletUUID string
-	err = tx.QueryRow(ctx, `INSERT INTO wallets(public_id,legal_entity_id,tenant_id,owner_type,owner_id,currency,status)
-		VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id::text`, wallet.ID, entityUUID, wallet.TenantID, wallet.OwnerType, wallet.OwnerID, wallet.Currency, wallet.Status).Scan(&walletUUID)
+	err = tx.QueryRow(ctx, `INSERT INTO wallets(public_id,legal_entity_id,tenant_id,owner_type,owner_id,currency,status,source_application,creation_idempotency_key,creation_request_hash)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id::text`, wallet.ID, entityUUID, wallet.TenantID, wallet.OwnerType, wallet.OwnerID, wallet.Currency, wallet.Status, wallet.SourceApplication, wallet.IdempotencyKey, requestHash).Scan(&walletUUID)
 	if err != nil {
 		return Wallet{}, err
 	}
@@ -146,6 +164,18 @@ func (s *Service) CreateWallet(ctx context.Context, wallet Wallet) (Wallet, erro
 		return Wallet{}, err
 	}
 	return wallet, tx.Commit(ctx)
+}
+
+func (s *Service) GetWallet(ctx context.Context, legalEntityID, tenantID, walletID string) (Wallet, error) {
+	var out Wallet
+	err := s.pool.QueryRow(ctx, `SELECT w.public_id,le.public_id,w.tenant_id,w.owner_type,w.owner_id,w.currency,w.status
+		FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id
+		WHERE w.public_id=$1 AND le.public_id=$2 AND w.tenant_id=$3`, walletID, legalEntityID, tenantID).
+		Scan(&out.ID, &out.LegalEntityID, &out.TenantID, &out.OwnerType, &out.OwnerID, &out.Currency, &out.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Wallet{}, ErrNotFound
+	}
+	return out, err
 }
 
 func (s *Service) GetBalance(ctx context.Context, legalEntityID, tenantID, walletID string) (Balance, error) {

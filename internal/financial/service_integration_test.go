@@ -25,11 +25,15 @@ func TestLoanFundingAndTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	source, err := s.CreateWallet(ctx, Wallet{LegalEntityID: entity.ID, TenantID: "tenant-a", OwnerType: "customer", OwnerID: "customer-a", Currency: "ZMW"})
+	source, err := s.CreateWallet(ctx, Wallet{LegalEntityID: entity.ID, TenantID: "tenant-a", OwnerType: "customer", OwnerID: "customer-a", Currency: "ZMW", SourceApplication: "integration-test", IdempotencyKey: "wallet-source-001"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	destination, err := s.CreateWallet(ctx, Wallet{LegalEntityID: entity.ID, TenantID: "tenant-a", OwnerType: "customer", OwnerID: "customer-b", Currency: "ZMW"})
+	replayedSource, err := s.CreateWallet(ctx, Wallet{LegalEntityID: entity.ID, TenantID: "tenant-a", OwnerType: "customer", OwnerID: "customer-a", Currency: "ZMW", SourceApplication: "integration-test", IdempotencyKey: "wallet-source-001"})
+	if err != nil || replayedSource.ID != source.ID {
+		t.Fatalf("wallet creation replay: id=%q want=%q err=%v", replayedSource.ID, source.ID, err)
+	}
+	destination, err := s.CreateWallet(ctx, Wallet{LegalEntityID: entity.ID, TenantID: "tenant-a", OwnerType: "customer", OwnerID: "customer-b", Currency: "ZMW", SourceApplication: "integration-test", IdempotencyKey: "wallet-destination-001"})
 	if err != nil {
 		t.Fatal(err)
 	}
