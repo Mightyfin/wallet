@@ -15,6 +15,7 @@ type api struct{ financial *financial.Service }
 func (a *api) routes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/legal-entities", require("wallet.admin", "wallet-ledger-admin", http.HandlerFunc(a.createLegalEntity)))
 	mux.Handle("POST /v1/wallets", require("wallet.write", "wallet-ledger-admin", http.HandlerFunc(a.createWallet)))
+	mux.Handle("POST /v1/wallets/{wallet_id}/lifecycle", require("wallet.lifecycle", "wallet-ledger-admin", http.HandlerFunc(a.transitionWallet)))
 	mux.Handle("GET /v1/wallets/{wallet_id}/balance", require("wallet.read", "wallet-ledger-admin", http.HandlerFunc(a.balance)))
 	mux.Handle("POST /v1/transfers", require("wallet.transfer", "wallet-ledger-admin", http.HandlerFunc(a.transfer)))
 	mux.Handle("POST /v1/loan-disbursements", require("wallet.disburse", "wallet-ledger-admin", http.HandlerFunc(a.disburseLoan)))
@@ -24,6 +25,33 @@ func (a *api) routes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/internal/transactions/{transaction_id}/reversals", require("wallet.reverse", "wallet-ledger-admin", http.HandlerFunc(a.reverseTransaction)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.createHold)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds/{hold_id}/release", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.releaseHold)))
+}
+
+func (a *api) transitionWallet(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	key, ok := idempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		LegalEntityID     string `json:"legal_entity_id"`
+		TargetStatus      string `json:"target_status"`
+		Reason            string `json:"reason"`
+		EvidenceReference string `json:"evidence_reference"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	wallet, err := a.financial.TransitionWallet(r.Context(), financial.WalletLifecycleRequest{
+		LegalEntityID: body.LegalEntityID, TenantID: p.TenantID, WalletID: r.PathValue("wallet_id"),
+		TargetStatus: body.TargetStatus, Reason: body.Reason, EvidenceReference: body.EvidenceReference,
+		ActorSubject: p.Subject, SourceApplication: p.ApplicationID, IdempotencyKey: key,
+	})
+	if err != nil {
+		writeFinancialError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, wallet)
 }
 
 func (a *api) reverseTransaction(w http.ResponseWriter, r *http.Request) {
@@ -81,7 +109,7 @@ func (a *api) createWallet(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	wallet, err := a.financial.CreateWallet(r.Context(), financial.Wallet{LegalEntityID: body.LegalEntityID, TenantID: p.TenantID, OwnerType: body.OwnerType, OwnerID: body.OwnerID, Currency: body.Currency})
+	wallet, err := a.financial.CreateWallet(r.Context(), financial.Wallet{LegalEntityID: body.LegalEntityID, TenantID: p.TenantID, OwnerType: body.OwnerType, OwnerID: body.OwnerID, Currency: body.Currency, CreatedBy: p.Subject, SourceApplication: p.ApplicationID})
 	if err != nil {
 		writeFinancialError(w, err)
 		return

@@ -33,6 +33,17 @@ func TestLoanFundingAndTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if source.Status != "pending" || destination.Status != "pending" {
+		t.Fatal("new wallets must remain pending until eligibility approval")
+	}
+	source, err = s.TransitionWallet(ctx, WalletLifecycleRequest{LegalEntityID: entity.ID, TenantID: "tenant-a", WalletID: source.ID, TargetStatus: "active", Reason: "KYC and product eligibility approved", EvidenceReference: "eligibility:source-1", ActorSubject: "compliance-checker", SourceApplication: "kyc-service", IdempotencyKey: "activate-source-0001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	destination, err = s.TransitionWallet(ctx, WalletLifecycleRequest{LegalEntityID: entity.ID, TenantID: "tenant-a", WalletID: destination.ID, TargetStatus: "active", Reason: "KYC and product eligibility approved", EvidenceReference: "eligibility:destination-1", ActorSubject: "compliance-checker", SourceApplication: "kyc-service", IdempotencyKey: "activate-destination-0001"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	disbursement := LoanDisbursement{LegalEntityID: entity.ID, TenantID: "tenant-a", DestinationWalletID: source.ID, FacilityID: "facility-1", DisbursementID: "drawdown-1", Amount: "100.00", Currency: "ZMW", IdempotencyKey: "loan-0001"}
 	first, err := s.DisburseLoan(ctx, disbursement)
 	if err != nil {
@@ -116,6 +127,10 @@ func TestLoanFundingAndTransfer(t *testing.T) {
 	depositedBalance, err := s.GetBalance(ctx, entity.ID, "tenant-a", source.ID)
 	if err != nil || depositedBalance.Available.StringFixed(2) != "97.00" {
 		t.Fatalf("deposited balance: %#v %v", depositedBalance, err)
+	}
+	_, err = s.TransitionWallet(ctx, WalletLifecycleRequest{LegalEntityID: entity.ID, TenantID: "tenant-a", WalletID: source.ID, TargetStatus: "closed", Reason: "Customer requested account closure", EvidenceReference: "closure-request:source-1", ActorSubject: "operations-checker", SourceApplication: "wallet-operations", IdempotencyKey: "close-source-0001"})
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("non-zero wallet closure must fail, got %v", err)
 	}
 	_, err = s.Transfer(ctx, Transfer{LegalEntityID: entity.ID, TenantID: "tenant-a", SourceWalletID: source.ID, DestinationWalletID: destination.ID, Amount: "1000.00", Currency: "ZMW", IdempotencyKey: "transfer-2"})
 	if !errors.Is(err, ErrInsufficientBalance) {

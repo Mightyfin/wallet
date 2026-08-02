@@ -35,13 +35,14 @@ type LegalEntity struct {
 }
 
 type Wallet struct {
-	ID            string `json:"id"`
-	LegalEntityID string `json:"legal_entity_id"`
-	TenantID      string `json:"tenant_id"`
-	OwnerType     string `json:"owner_type"`
-	OwnerID       string `json:"owner_id"`
-	Currency      string `json:"currency"`
-	Status        string `json:"status"`
+	ID                           string `json:"id"`
+	LegalEntityID                string `json:"legal_entity_id"`
+	TenantID                     string `json:"tenant_id"`
+	OwnerType                    string `json:"owner_type"`
+	OwnerID                      string `json:"owner_id"`
+	Currency                     string `json:"currency"`
+	Status                       string `json:"status"`
+	CreatedBy, SourceApplication string `json:"-"`
 }
 
 type Balance struct {
@@ -96,7 +97,13 @@ func (s *Service) CreateLegalEntity(ctx context.Context, name, country, currency
 }
 
 func (s *Service) CreateWallet(ctx context.Context, wallet Wallet) (Wallet, error) {
-	wallet.ID, wallet.Currency, wallet.Status = newID("wal"), strings.ToUpper(strings.TrimSpace(wallet.Currency)), "active"
+	wallet.ID, wallet.Currency, wallet.Status = newID("wal"), strings.ToUpper(strings.TrimSpace(wallet.Currency)), "pending"
+	if wallet.CreatedBy == "" {
+		wallet.CreatedBy = "system:wallet-provisioning"
+	}
+	if wallet.SourceApplication == "" {
+		wallet.SourceApplication = "wallet-ledger"
+	}
 	if wallet.LegalEntityID == "" || wallet.TenantID == "" || wallet.OwnerID == "" || len(wallet.Currency) != 3 {
 		return Wallet{}, fmt.Errorf("invalid wallet: %w", ErrConflict)
 	}
@@ -129,8 +136,12 @@ func (s *Service) CreateWallet(ctx context.Context, wallet Wallet) (Wallet, erro
 	if err != nil {
 		return Wallet{}, err
 	}
+	_, err = tx.Exec(ctx, `INSERT INTO wallet_status_history(wallet_id,from_status,to_status,reason,evidence_reference,actor_subject,source_application,idempotency_key,request_hash) VALUES($1,NULL,'pending','Wallet provisioned pending eligibility approval','wallet-created:'||$2,$3,$4,'wallet-create:'||$2,$5)`, walletUUID, wallet.ID, wallet.CreatedBy, wallet.SourceApplication, hashRequest(wallet.ID, "pending"))
+	if err != nil {
+		return Wallet{}, err
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO outbox_events(public_id,event_type,aggregate_type,aggregate_id,payload)
-		VALUES($1,'wallet.created','wallet',$2::varchar,jsonb_build_object('wallet_id',$2::varchar,'tenant_id',$3::text))`, newID("evt"), wallet.ID, wallet.TenantID)
+		VALUES($1,'wallet.created','wallet',$2::varchar,jsonb_build_object('wallet_id',$2::varchar,'tenant_id',$3::text,'status','pending'))`, newID("evt"), wallet.ID, wallet.TenantID)
 	if err != nil {
 		return Wallet{}, err
 	}

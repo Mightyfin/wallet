@@ -59,6 +59,12 @@ environment and scope claims. Generic journal posting and reversal HTTP APIs are
 absent. Live rail initiation remains disabled until a licensed provider and reconciliation control
 are configured.
 
+New wallets are provisioned as `pending`. They become transactional only through an idempotent
+`wallet.lifecycle` command carrying an opaque Party/KYC/compliance evidence reference. Allowed
+states are `pending`, `active`, `restricted`, `suspended`, and terminal `closed`; every transition
+has immutable history and emits an outbox event. Closure requires a zero ledger balance and no
+active holds. Wallet never stores KYC documents or decides product eligibility itself.
+
 The machine-readable internal contract lives in the separate API Contracts repository at
 `openapi/wallet-ledger/wallet-ledger.openapi.yaml`.
 
