@@ -21,7 +21,7 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg := Config{
-		Environment:  envOrDefault("WALLET_LEDGER_ENVIRONMENT", "local"),
+		Environment:  strings.TrimSpace(os.Getenv("WALLET_LEDGER_ENVIRONMENT")),
 		HTTPAddress:  envOrDefault("WALLET_LEDGER_HTTP_ADDRESS", ":8080"),
 		DatabaseURL:  databaseURL,
 		OIDCIssuer:   strings.TrimRight(strings.TrimSpace(os.Getenv("WALLET_LEDGER_OIDC_ISSUER")), "/"),
@@ -30,6 +30,9 @@ func Load() (Config, error) {
 	}
 	if cfg.DatabaseURL == "" {
 		return Config{}, fmt.Errorf("database configuration is required")
+	}
+	if cfg.Environment == "" {
+		return Config{}, fmt.Errorf("WALLET_LEDGER_ENVIRONMENT is required")
 	}
 	if !strings.HasPrefix(cfg.HTTPAddress, ":") {
 		return Config{}, fmt.Errorf("WALLET_LEDGER_HTTP_ADDRESS must use :port form")

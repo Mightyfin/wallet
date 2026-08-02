@@ -21,8 +21,36 @@ func (a *api) routes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/loan-repayments/wallet", require("wallet.repay", "wallet-ledger-admin", http.HandlerFunc(a.repayLoanFromWallet)))
 	mux.Handle("POST /v1/loan-repayments/external-settlements", require("wallet.settlement", "wallet-ledger-admin", http.HandlerFunc(a.recordExternalRepayment)))
 	mux.Handle("POST /v1/deposits/external-settlements", require("wallet.settlement", "wallet-ledger-admin", http.HandlerFunc(a.recordSettledDeposit)))
+	mux.Handle("POST /v1/internal/transactions/{transaction_id}/reversals", require("wallet.reverse", "wallet-ledger-admin", http.HandlerFunc(a.reverseTransaction)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.createHold)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds/{hold_id}/release", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.releaseHold)))
+}
+
+func (a *api) reverseTransaction(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	key, ok := idempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		LegalEntityID     string `json:"legal_entity_id"`
+		Reason            string `json:"reason"`
+		ApprovalReference string `json:"approval_reference"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	result, err := a.financial.ReverseTransaction(r.Context(), financial.ReversalRequest{
+		LegalEntityID: body.LegalEntityID, TenantID: p.TenantID,
+		TransactionID: r.PathValue("transaction_id"), Reason: body.Reason,
+		ApprovalReference: body.ApprovalReference, IdempotencyKey: key,
+		CorrelationID: r.Header.Get("X-Correlation-Id"), SourceSystem: p.ApplicationID,
+	})
+	if err != nil {
+		writeFinancialError(w, err)
+		return
+	}
+	writeTransaction(w, result)
 }
 
 func (a *api) createLegalEntity(w http.ResponseWriter, r *http.Request) {

@@ -84,8 +84,11 @@ func (s *Service) CreateLegalEntity(ctx context.Context, name, country, currency
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO ledger_accounts(public_id,legal_entity_id,account_code,account_class,account_purpose,normal_side,currency,status) VALUES
 		($1,$2,$3,'asset','loan_receivable','debit',$4,'active'),
-		($5,$2,$6,'asset','bank_clearing','debit',$4,'active')`,
-		newID("acc"), entityUUID, "LOAN_RECEIVABLE:"+currency, currency, newID("acc"), "BANK_CLEARING:"+currency)
+		($5,$2,$6,'asset','bank_clearing','debit',$4,'active'),
+		($7,$2,$8,'liability','suspense','credit',$4,'active'),
+		($9,$2,$10,'income','fee_income','credit',$4,'active'),
+		($11,$2,$12,'expense','payment_fees','debit',$4,'active')`,
+		newID("acc"), entityUUID, "LOAN_RECEIVABLE:"+currency, currency, newID("acc"), "BANK_CLEARING:"+currency, newID("acc"), "SUSPENSE:"+currency, newID("acc"), "FEE_INCOME:"+currency, newID("acc"), "PAYMENT_FEES:"+currency)
 	if err != nil {
 		return LegalEntity{}, err
 	}
@@ -140,7 +143,7 @@ func (s *Service) GetBalance(ctx context.Context, legalEntityID, tenantID, walle
 	err := s.pool.QueryRow(ctx, `SELECT w.public_id,w.currency,
 		COALESCE(SUM(CASE WHEN e.side=a.normal_side THEN e.amount ELSE -e.amount END),0)::text,
 		COALESCE((SELECT SUM(h.amount) FROM balance_holds h WHERE h.wallet_id=w.id AND h.status='active' AND (h.expires_at IS NULL OR h.expires_at>now())),0)::text
-		FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id JOIN ledger_accounts a ON a.wallet_id=w.id LEFT JOIN journal_entries e ON e.account_id=a.id
+		FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id JOIN ledger_accounts a ON a.wallet_id=w.id AND a.account_purpose='wallet_available' LEFT JOIN journal_entries e ON e.account_id=a.id
 		WHERE w.public_id=$1 AND le.public_id=$2 AND w.tenant_id=$3 GROUP BY w.id,w.public_id,w.currency`, walletID, legalEntityID, tenantID).Scan(&result.WalletID, &result.Currency, &ledger, &held)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Balance{}, ErrNotFound
