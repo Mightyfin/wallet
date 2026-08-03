@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 )
@@ -199,8 +200,28 @@ func (s *Service) GetBalance(ctx context.Context, legalEntityID, tenantID, walle
 }
 
 func (s *Service) Transfer(ctx context.Context, in Transfer) (Transaction, error) {
-	amount, err := decimal.NewFromString(in.Amount)
-	if err != nil || !amount.IsPositive() || amount.Exponent() < -2 {
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		result, err := s.transferOnce(ctx, in)
+		if !isSerializationFailure(err) {
+			return result, err
+		}
+		lastErr = err
+		delay := time.Duration(1<<attempt) * 5 * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return Transaction{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return Transaction{}, lastErr
+}
+
+func (s *Service) transferOnce(ctx context.Context, in Transfer) (Transaction, error) {
+	amount, err := parsePostingAmount(in.Amount)
+	if err != nil {
 		return Transaction{}, fmt.Errorf("invalid amount: %w", ErrConflict)
 	}
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))
@@ -295,11 +316,16 @@ func (s *Service) Transfer(ctx context.Context, in Transfer) (Transaction, error
 	return result, tx.Commit(ctx)
 }
 
+func isSerializationFailure(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (pgErr.Code == "40001" || pgErr.Code == "40P01")
+}
+
 // DisburseLoan records an already-approved facility as a MightyFin receivable
 // and an equal wallet liability. It does not perform underwriting or approval.
 func (s *Service) DisburseLoan(ctx context.Context, in LoanDisbursement) (Transaction, error) {
-	amount, err := decimal.NewFromString(in.Amount)
-	if err != nil || !amount.IsPositive() || amount.Exponent() < -2 {
+	amount, err := parsePostingAmount(in.Amount)
+	if err != nil {
 		return Transaction{}, fmt.Errorf("invalid amount: %w", ErrConflict)
 	}
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))

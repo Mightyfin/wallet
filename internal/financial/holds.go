@@ -27,8 +27,8 @@ type Hold struct {
 }
 
 func (s *Service) CreateHold(ctx context.Context, in HoldRequest) (Hold, error) {
-	amount, err := decimal.NewFromString(in.Amount)
-	if err != nil || !amount.IsPositive() || amount.Exponent() < -2 {
+	amount, err := parsePostingAmount(in.Amount)
+	if err != nil {
 		return Hold{}, fmt.Errorf("invalid amount: %w", ErrConflict)
 	}
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))

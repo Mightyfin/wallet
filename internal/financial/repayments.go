@@ -25,8 +25,8 @@ type SettledExternalRepayment struct {
 // principal, interest and fees remains a lending-domain decision supplied later
 // through approved posting rules.
 func (s *Service) RepayLoanFromWallet(ctx context.Context, in WalletRepayment) (Transaction, error) {
-	amount, err := decimal.NewFromString(in.Amount)
-	if err != nil || !amount.IsPositive() || amount.Exponent() < -2 {
+	amount, err := parsePostingAmount(in.Amount)
+	if err != nil {
 		return Transaction{}, fmt.Errorf("invalid amount: %w", ErrConflict)
 	}
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))
@@ -98,8 +98,8 @@ func (s *Service) RepayLoanFromWallet(ctx context.Context, in WalletRepayment) (
 // RecordSettledExternalRepayment records only externally confirmed bank,
 // payroll/MOU or mobile-money receipts supplied by reconciliation.
 func (s *Service) RecordSettledExternalRepayment(ctx context.Context, in SettledExternalRepayment) (Transaction, error) {
-	amount, err := decimal.NewFromString(in.Amount)
-	if err != nil || !amount.IsPositive() || amount.Exponent() < -2 {
+	amount, err := parsePostingAmount(in.Amount)
+	if err != nil {
 		return Transaction{}, ErrConflict
 	}
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))
