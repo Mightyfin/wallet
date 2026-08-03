@@ -23,7 +23,7 @@ func authenticate(verifier auth.Verifier, disabled bool, next http.Handler) http
 			if tenant == "" {
 				tenant = "local-test"
 			}
-			p := auth.Principal{Subject: "local-developer", TenantID: tenant, ApplicationID: "local-client", Environment: "local", Scopes: map[string]struct{}{"wallet.admin": {}, "wallet.write": {}, "wallet.read": {}, "wallet.transfer": {}, "wallet.disburse": {}, "wallet.repay": {}, "wallet.settlement": {}, "wallet.hold": {}}, Roles: map[string]struct{}{"wallet-ledger-admin": {}}}
+			p := auth.Principal{Subject: "local-developer", TenantID: tenant, ApplicationID: "local-client", Environment: "local", Scopes: map[string]struct{}{"wallet.admin": {}, "wallet.write": {}, "wallet.read": {}, "wallet.lifecycle": {}, "wallet.transfer": {}, "wallet.disburse": {}, "wallet.repay": {}, "wallet.settlement": {}, "wallet.reverse": {}, "wallet.hold": {}}, Roles: map[string]struct{}{"wallet-ledger-admin": {}}}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, p)))
 			return
 		}

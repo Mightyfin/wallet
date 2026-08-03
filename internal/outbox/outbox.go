@@ -32,7 +32,7 @@ func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration) ([]Ev
 		return nil, err
 	}
 	defer tx.Rollback(ctx)
-	rows, err := tx.Query(ctx, `WITH candidates AS (SELECT id FROM outbox_events WHERE published_at IS NULL AND next_attempt_at<=now() AND (locked_until IS NULL OR locked_until<now()) ORDER BY occurred_at,id FOR UPDATE SKIP LOCKED LIMIT $1) UPDATE outbox_events event SET locked_until=now()+$2::interval,attempts=attempts+1 FROM candidates WHERE event.id=candidates.id RETURNING event.public_id,event.event_type,event.aggregate_type,event.aggregate_id,event.payload,event.occurred_at`, limit, lease.String())
+	rows, err := tx.Query(ctx, `WITH candidates AS (SELECT id FROM outbox_events WHERE delivery_status='pending' AND published_at IS NULL AND next_attempt_at<=now() AND (locked_until IS NULL OR locked_until<now()) ORDER BY occurred_at,id FOR UPDATE SKIP LOCKED LIMIT $1) UPDATE outbox_events event SET locked_until=now()+$2::interval FROM candidates WHERE event.id=candidates.id RETURNING event.public_id,event.event_type,event.aggregate_type,event.aggregate_id,event.payload,event.occurred_at`, limit, lease.String())
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +52,7 @@ func (s *Store) Claim(ctx context.Context, limit int, lease time.Duration) ([]Ev
 }
 
 func (s *Store) MarkPublished(ctx context.Context, id string) error {
-	tag, err := s.pool.Exec(ctx, `UPDATE outbox_events SET published_at=now(),locked_until=NULL,last_error=NULL WHERE public_id=$1 AND published_at IS NULL`, id)
+	tag, err := s.pool.Exec(ctx, `UPDATE outbox_events SET published_at=now(),delivery_status='published',locked_until=NULL,last_error=NULL WHERE public_id=$1 AND delivery_status='pending' AND published_at IS NULL`, id)
 	if err != nil {
 		return err
 	}
@@ -66,7 +66,7 @@ func (s *Store) MarkFailed(ctx context.Context, id string, cause error) error {
 	if cause != nil {
 		message = cause.Error()
 	}
-	_, err := s.pool.Exec(ctx, `UPDATE outbox_events SET locked_until=NULL,last_error=$2,next_attempt_at=now()+LEAST(interval '15 minutes',interval '5 seconds'*power(2,LEAST(attempts,8))) WHERE public_id=$1 AND published_at IS NULL`, id, message)
+	_, err := s.pool.Exec(ctx, `UPDATE outbox_events SET attempts=attempts+1,delivery_status=CASE WHEN attempts+1>=max_attempts THEN 'dead_letter' ELSE 'pending' END,dead_lettered_at=CASE WHEN attempts+1>=max_attempts THEN now() ELSE NULL END,locked_until=NULL,last_error=$2,next_attempt_at=now()+LEAST(interval '15 minutes',interval '5 seconds'*power(2,LEAST(attempts+1,8))) WHERE public_id=$1 AND delivery_status='pending' AND published_at IS NULL`, id, message)
 	return err
 }
 

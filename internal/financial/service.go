@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/shopspring/decimal"
 )
@@ -35,13 +36,15 @@ type LegalEntity struct {
 }
 
 type Wallet struct {
-	ID            string `json:"id"`
-	LegalEntityID string `json:"legal_entity_id"`
-	TenantID      string `json:"tenant_id"`
-	OwnerType     string `json:"owner_type"`
-	OwnerID       string `json:"owner_id"`
-	Currency      string `json:"currency"`
-	Status        string `json:"status"`
+	ID                           string `json:"id"`
+	LegalEntityID                string `json:"legal_entity_id"`
+	TenantID                     string `json:"tenant_id"`
+	OwnerType                    string `json:"owner_type"`
+	OwnerID                      string `json:"owner_id"`
+	Currency                     string `json:"currency"`
+	Status                       string `json:"status"`
+	CreatedBy, SourceApplication string `json:"-"`
+	IdempotencyKey               string `json:"-"`
 }
 
 type Balance struct {
@@ -84,8 +87,11 @@ func (s *Service) CreateLegalEntity(ctx context.Context, name, country, currency
 	}
 	_, err = tx.Exec(ctx, `INSERT INTO ledger_accounts(public_id,legal_entity_id,account_code,account_class,account_purpose,normal_side,currency,status) VALUES
 		($1,$2,$3,'asset','loan_receivable','debit',$4,'active'),
-		($5,$2,$6,'asset','bank_clearing','debit',$4,'active')`,
-		newID("acc"), entityUUID, "LOAN_RECEIVABLE:"+currency, currency, newID("acc"), "BANK_CLEARING:"+currency)
+		($5,$2,$6,'asset','bank_clearing','debit',$4,'active'),
+		($7,$2,$8,'liability','suspense','credit',$4,'active'),
+		($9,$2,$10,'income','fee_income','credit',$4,'active'),
+		($11,$2,$12,'expense','payment_fees','debit',$4,'active')`,
+		newID("acc"), entityUUID, "LOAN_RECEIVABLE:"+currency, currency, newID("acc"), "BANK_CLEARING:"+currency, newID("acc"), "SUSPENSE:"+currency, newID("acc"), "FEE_INCOME:"+currency, newID("acc"), "PAYMENT_FEES:"+currency)
 	if err != nil {
 		return LegalEntity{}, err
 	}
@@ -93,8 +99,14 @@ func (s *Service) CreateLegalEntity(ctx context.Context, name, country, currency
 }
 
 func (s *Service) CreateWallet(ctx context.Context, wallet Wallet) (Wallet, error) {
-	wallet.ID, wallet.Currency, wallet.Status = newID("wal"), strings.ToUpper(strings.TrimSpace(wallet.Currency)), "active"
-	if wallet.LegalEntityID == "" || wallet.TenantID == "" || wallet.OwnerID == "" || len(wallet.Currency) != 3 {
+	wallet.Currency, wallet.Status = strings.ToUpper(strings.TrimSpace(wallet.Currency)), "pending"
+	if wallet.CreatedBy == "" {
+		wallet.CreatedBy = "system:wallet-provisioning"
+	}
+	if wallet.SourceApplication == "" {
+		wallet.SourceApplication = "wallet-ledger"
+	}
+	if wallet.LegalEntityID == "" || wallet.TenantID == "" || wallet.OwnerID == "" || len(wallet.Currency) != 3 || len(wallet.IdempotencyKey) < 8 || len(wallet.IdempotencyKey) > 128 {
 		return Wallet{}, fmt.Errorf("invalid wallet: %w", ErrConflict)
 	}
 	switch wallet.OwnerType {
@@ -102,6 +114,23 @@ func (s *Service) CreateWallet(ctx context.Context, wallet Wallet) (Wallet, erro
 	default:
 		return Wallet{}, fmt.Errorf("invalid owner type: %w", ErrConflict)
 	}
+	requestHash := hashRequest(wallet.LegalEntityID, wallet.OwnerType, wallet.OwnerID, wallet.Currency)
+	var existing Wallet
+	var existingHash string
+	err := s.pool.QueryRow(ctx, `SELECT w.public_id,le.public_id,w.tenant_id,w.owner_type,w.owner_id,w.currency,w.status,w.creation_request_hash
+		FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id
+		WHERE w.tenant_id=$1 AND w.source_application=$2 AND w.creation_idempotency_key=$3`, wallet.TenantID, wallet.SourceApplication, wallet.IdempotencyKey).
+		Scan(&existing.ID, &existing.LegalEntityID, &existing.TenantID, &existing.OwnerType, &existing.OwnerID, &existing.Currency, &existing.Status, &existingHash)
+	if err == nil {
+		if existingHash != requestHash {
+			return Wallet{}, ErrConflict
+		}
+		return existing, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return Wallet{}, err
+	}
+	wallet.ID = newID("wal")
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return Wallet{}, err
@@ -115,8 +144,8 @@ func (s *Service) CreateWallet(ctx context.Context, wallet Wallet) (Wallet, erro
 		return Wallet{}, err
 	}
 	var walletUUID string
-	err = tx.QueryRow(ctx, `INSERT INTO wallets(public_id,legal_entity_id,tenant_id,owner_type,owner_id,currency,status)
-		VALUES($1,$2,$3,$4,$5,$6,$7) RETURNING id::text`, wallet.ID, entityUUID, wallet.TenantID, wallet.OwnerType, wallet.OwnerID, wallet.Currency, wallet.Status).Scan(&walletUUID)
+	err = tx.QueryRow(ctx, `INSERT INTO wallets(public_id,legal_entity_id,tenant_id,owner_type,owner_id,currency,status,source_application,creation_idempotency_key,creation_request_hash)
+		VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) RETURNING id::text`, wallet.ID, entityUUID, wallet.TenantID, wallet.OwnerType, wallet.OwnerID, wallet.Currency, wallet.Status, wallet.SourceApplication, wallet.IdempotencyKey, requestHash).Scan(&walletUUID)
 	if err != nil {
 		return Wallet{}, err
 	}
@@ -126,12 +155,28 @@ func (s *Service) CreateWallet(ctx context.Context, wallet Wallet) (Wallet, erro
 	if err != nil {
 		return Wallet{}, err
 	}
+	_, err = tx.Exec(ctx, `INSERT INTO wallet_status_history(wallet_id,from_status,to_status,reason,evidence_reference,actor_subject,source_application,idempotency_key,request_hash) VALUES($1,NULL,'pending','Wallet provisioned pending eligibility approval','wallet-created:'||$2,$3,$4,'wallet-create:'||$2,$5)`, walletUUID, wallet.ID, wallet.CreatedBy, wallet.SourceApplication, hashRequest(wallet.ID, "pending"))
+	if err != nil {
+		return Wallet{}, err
+	}
 	_, err = tx.Exec(ctx, `INSERT INTO outbox_events(public_id,event_type,aggregate_type,aggregate_id,payload)
-		VALUES($1,'wallet.created','wallet',$2::varchar,jsonb_build_object('wallet_id',$2::varchar,'tenant_id',$3::text))`, newID("evt"), wallet.ID, wallet.TenantID)
+		VALUES($1,'wallet.created','wallet',$2::varchar,jsonb_build_object('wallet_id',$2::varchar,'tenant_id',$3::text,'status','pending'))`, newID("evt"), wallet.ID, wallet.TenantID)
 	if err != nil {
 		return Wallet{}, err
 	}
 	return wallet, tx.Commit(ctx)
+}
+
+func (s *Service) GetWallet(ctx context.Context, legalEntityID, tenantID, walletID string) (Wallet, error) {
+	var out Wallet
+	err := s.pool.QueryRow(ctx, `SELECT w.public_id,le.public_id,w.tenant_id,w.owner_type,w.owner_id,w.currency,w.status
+		FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id
+		WHERE w.public_id=$1 AND le.public_id=$2 AND w.tenant_id=$3`, walletID, legalEntityID, tenantID).
+		Scan(&out.ID, &out.LegalEntityID, &out.TenantID, &out.OwnerType, &out.OwnerID, &out.Currency, &out.Status)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Wallet{}, ErrNotFound
+	}
+	return out, err
 }
 
 func (s *Service) GetBalance(ctx context.Context, legalEntityID, tenantID, walletID string) (Balance, error) {
@@ -140,7 +185,7 @@ func (s *Service) GetBalance(ctx context.Context, legalEntityID, tenantID, walle
 	err := s.pool.QueryRow(ctx, `SELECT w.public_id,w.currency,
 		COALESCE(SUM(CASE WHEN e.side=a.normal_side THEN e.amount ELSE -e.amount END),0)::text,
 		COALESCE((SELECT SUM(h.amount) FROM balance_holds h WHERE h.wallet_id=w.id AND h.status='active' AND (h.expires_at IS NULL OR h.expires_at>now())),0)::text
-		FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id JOIN ledger_accounts a ON a.wallet_id=w.id LEFT JOIN journal_entries e ON e.account_id=a.id
+		FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id JOIN ledger_accounts a ON a.wallet_id=w.id AND a.account_purpose='wallet_available' LEFT JOIN journal_entries e ON e.account_id=a.id
 		WHERE w.public_id=$1 AND le.public_id=$2 AND w.tenant_id=$3 GROUP BY w.id,w.public_id,w.currency`, walletID, legalEntityID, tenantID).Scan(&result.WalletID, &result.Currency, &ledger, &held)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Balance{}, ErrNotFound
@@ -155,8 +200,28 @@ func (s *Service) GetBalance(ctx context.Context, legalEntityID, tenantID, walle
 }
 
 func (s *Service) Transfer(ctx context.Context, in Transfer) (Transaction, error) {
-	amount, err := decimal.NewFromString(in.Amount)
-	if err != nil || !amount.IsPositive() || amount.Exponent() < -2 {
+	var lastErr error
+	for attempt := 0; attempt < 4; attempt++ {
+		result, err := s.transferOnce(ctx, in)
+		if !isSerializationFailure(err) {
+			return result, err
+		}
+		lastErr = err
+		delay := time.Duration(1<<attempt) * 5 * time.Millisecond
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return Transaction{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return Transaction{}, lastErr
+}
+
+func (s *Service) transferOnce(ctx context.Context, in Transfer) (Transaction, error) {
+	amount, err := parsePostingAmount(in.Amount)
+	if err != nil {
 		return Transaction{}, fmt.Errorf("invalid amount: %w", ErrConflict)
 	}
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))
@@ -251,11 +316,16 @@ func (s *Service) Transfer(ctx context.Context, in Transfer) (Transaction, error
 	return result, tx.Commit(ctx)
 }
 
+func isSerializationFailure(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && (pgErr.Code == "40001" || pgErr.Code == "40P01")
+}
+
 // DisburseLoan records an already-approved facility as a MightyFin receivable
 // and an equal wallet liability. It does not perform underwriting or approval.
 func (s *Service) DisburseLoan(ctx context.Context, in LoanDisbursement) (Transaction, error) {
-	amount, err := decimal.NewFromString(in.Amount)
-	if err != nil || !amount.IsPositive() || amount.Exponent() < -2 {
+	amount, err := parsePostingAmount(in.Amount)
+	if err != nil {
 		return Transaction{}, fmt.Errorf("invalid amount: %w", ErrConflict)
 	}
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))

@@ -18,8 +18,8 @@ type SettledDeposit struct {
 // RecordSettledDeposit credits spendable wallet value only after external
 // settlement evidence has been confirmed by reconciliation.
 func (s *Service) RecordSettledDeposit(ctx context.Context, in SettledDeposit) (Transaction, error) {
-	amount, err := decimal.NewFromString(in.Amount)
-	if err != nil || !amount.IsPositive() || amount.Exponent() < -2 {
+	amount, err := parsePostingAmount(in.Amount)
+	if err != nil {
 		return Transaction{}, ErrConflict
 	}
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))

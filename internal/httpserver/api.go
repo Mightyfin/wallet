@@ -3,6 +3,7 @@ package httpserver
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"strings"
 
@@ -15,14 +16,86 @@ type api struct{ financial *financial.Service }
 func (a *api) routes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/legal-entities", require("wallet.admin", "wallet-ledger-admin", http.HandlerFunc(a.createLegalEntity)))
 	mux.Handle("POST /v1/wallets", require("wallet.write", "wallet-ledger-admin", http.HandlerFunc(a.createWallet)))
+	mux.Handle("GET /v1/wallets/{wallet_id}", require("wallet.read", "wallet-ledger-admin", http.HandlerFunc(a.getWallet)))
+	mux.Handle("POST /v1/wallets/{wallet_id}/lifecycle", require("wallet.lifecycle", "wallet-ledger-admin", http.HandlerFunc(a.transitionWallet)))
 	mux.Handle("GET /v1/wallets/{wallet_id}/balance", require("wallet.read", "wallet-ledger-admin", http.HandlerFunc(a.balance)))
 	mux.Handle("POST /v1/transfers", require("wallet.transfer", "wallet-ledger-admin", http.HandlerFunc(a.transfer)))
 	mux.Handle("POST /v1/loan-disbursements", require("wallet.disburse", "wallet-ledger-admin", http.HandlerFunc(a.disburseLoan)))
 	mux.Handle("POST /v1/loan-repayments/wallet", require("wallet.repay", "wallet-ledger-admin", http.HandlerFunc(a.repayLoanFromWallet)))
 	mux.Handle("POST /v1/loan-repayments/external-settlements", require("wallet.settlement", "wallet-ledger-admin", http.HandlerFunc(a.recordExternalRepayment)))
 	mux.Handle("POST /v1/deposits/external-settlements", require("wallet.settlement", "wallet-ledger-admin", http.HandlerFunc(a.recordSettledDeposit)))
+	mux.Handle("POST /v1/internal/transactions/{transaction_id}/reversals", require("wallet.reverse", "wallet-ledger-admin", http.HandlerFunc(a.reverseTransaction)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.createHold)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds/{hold_id}/release", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.releaseHold)))
+}
+
+func (a *api) getWallet(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	entityID := strings.TrimSpace(r.URL.Query().Get("legal_entity_id"))
+	if entityID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "legal_entity_id_required"})
+		return
+	}
+	wallet, err := a.financial.GetWallet(r.Context(), entityID, p.TenantID, r.PathValue("wallet_id"))
+	if err != nil {
+		writeFinancialError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, wallet)
+}
+
+func (a *api) transitionWallet(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	key, ok := idempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		LegalEntityID     string `json:"legal_entity_id"`
+		TargetStatus      string `json:"target_status"`
+		Reason            string `json:"reason"`
+		EvidenceReference string `json:"evidence_reference"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	wallet, err := a.financial.TransitionWallet(r.Context(), financial.WalletLifecycleRequest{
+		LegalEntityID: body.LegalEntityID, TenantID: p.TenantID, WalletID: r.PathValue("wallet_id"),
+		TargetStatus: body.TargetStatus, Reason: body.Reason, EvidenceReference: body.EvidenceReference,
+		ActorSubject: p.Subject, SourceApplication: p.ApplicationID, IdempotencyKey: key,
+	})
+	if err != nil {
+		writeFinancialError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, wallet)
+}
+
+func (a *api) reverseTransaction(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	key, ok := idempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		LegalEntityID     string `json:"legal_entity_id"`
+		Reason            string `json:"reason"`
+		ApprovalReference string `json:"approval_reference"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	result, err := a.financial.ReverseTransaction(r.Context(), financial.ReversalRequest{
+		LegalEntityID: body.LegalEntityID, TenantID: p.TenantID,
+		TransactionID: r.PathValue("transaction_id"), Reason: body.Reason,
+		ApprovalReference: body.ApprovalReference, IdempotencyKey: key,
+		CorrelationID: r.Header.Get("X-Correlation-Id"), SourceSystem: p.ApplicationID,
+	})
+	if err != nil {
+		writeFinancialError(w, err)
+		return
+	}
+	writeTransaction(w, result)
 }
 
 func (a *api) createLegalEntity(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +117,10 @@ func (a *api) createLegalEntity(w http.ResponseWriter, r *http.Request) {
 
 func (a *api) createWallet(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
+	key, ok := idempotencyKey(w, r)
+	if !ok {
+		return
+	}
 	var body struct {
 		LegalEntityID string `json:"legal_entity_id"`
 		OwnerType     string `json:"owner_type"`
@@ -53,7 +130,7 @@ func (a *api) createWallet(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	wallet, err := a.financial.CreateWallet(r.Context(), financial.Wallet{LegalEntityID: body.LegalEntityID, TenantID: p.TenantID, OwnerType: body.OwnerType, OwnerID: body.OwnerID, Currency: body.Currency})
+	wallet, err := a.financial.CreateWallet(r.Context(), financial.Wallet{LegalEntityID: body.LegalEntityID, TenantID: p.TenantID, OwnerType: body.OwnerType, OwnerID: body.OwnerID, Currency: body.Currency, CreatedBy: p.Subject, SourceApplication: p.ApplicationID, IdempotencyKey: key})
 	if err != nil {
 		writeFinancialError(w, err)
 		return
@@ -248,6 +325,10 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 	decoder := json.NewDecoder(r.Body)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(destination); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
+		return false
+	}
+	if decoder.Decode(&struct{}{}) != io.EOF {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_request"})
 		return false
 	}
