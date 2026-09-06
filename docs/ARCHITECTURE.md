@@ -44,6 +44,11 @@ Bank statement uploads and receipts first become reconciliation evidence. They a
 authority by themselves. The reconciliation service must match and approve the evidence before it
 can invoke an external-settlement command.
 
+An approved funding-source reference may be carried with an authorised loan
+disbursement for audit and reconciliation. It is an operational approval
+control, not an extra journal entry: adding a second debit or credit to the
+wallet-credit posting would make the transaction economically incorrect.
+
 EFaaS owns partner API semantics and authorization but never owns balances. For production
 transactions it calls these capability-specific commands using a service token carrying the
 originating EFaaS tenant. EFaaS sandbox simulations remain isolated from this production ledger.

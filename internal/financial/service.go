@@ -92,6 +92,7 @@ type Transaction struct {
 
 type LoanDisbursement struct {
 	LegalEntityID, TenantID, DestinationWalletID, FacilityID, DisbursementID string
+	FundingSourceReference                                                   string
 	Amount, Currency, IdempotencyKey, CorrelationID, SourceSystem            string
 }
 
@@ -303,7 +304,7 @@ func (s *Service) DisburseLoan(ctx context.Context, in LoanDisbursement) (Transa
 		return Transaction{}, err
 	}
 	defer tx.Rollback(ctx)
-	requestHash := hashRequest(in.DestinationWalletID, in.FacilityID, in.DisbursementID, amount.StringFixed(2), in.Currency)
+	requestHash := hashRequest(in.DestinationWalletID, in.FacilityID, in.DisbursementID, strings.TrimSpace(in.FundingSourceReference), amount.StringFixed(2), in.Currency)
 	var existing Transaction
 	var existingHash, existingAmount string
 	err = tx.QueryRow(ctx, `SELECT jt.public_id,jt.status,jt.currency,jt.idempotency_key,jt.correlation_id,jt.request_hash,
@@ -340,8 +341,8 @@ func (s *Service) DisburseLoan(ctx context.Context, in LoanDisbursement) (Transa
 	result := Transaction{ID: newID("txn"), Status: "posted", Currency: in.Currency, IdempotencyKey: in.IdempotencyKey, CorrelationID: in.CorrelationID, Amount: amount}
 	var transactionUUID string
 	err = tx.QueryRow(ctx, `INSERT INTO journal_transactions(public_id,legal_entity_id,tenant_id,transaction_type,posting_rule,status,currency,external_reference,idempotency_key,request_hash,correlation_id,source_system,effective_at,metadata)
-		VALUES($1,$2,$3,'loan_disbursement','loan.disbursement','posted',$4,$5::varchar,$6,$7,$8,$9,$10,jsonb_build_object('facility_id',$11::varchar,'disbursement_id',$5::varchar)) RETURNING id::text`,
-		result.ID, entityUUID, in.TenantID, in.Currency, in.DisbursementID, in.IdempotencyKey, requestHash, in.CorrelationID, in.SourceSystem, time.Now().UTC(), in.FacilityID).Scan(&transactionUUID)
+		VALUES($1,$2,$3,'loan_disbursement','loan.disbursement','posted',$4,$5::varchar,$6,$7,$8,$9,$10,jsonb_build_object('facility_id',$11::varchar,'disbursement_id',$5::varchar,'funding_source_reference',NULLIF($12::varchar,''))) RETURNING id::text`,
+		result.ID, entityUUID, in.TenantID, in.Currency, in.DisbursementID, in.IdempotencyKey, requestHash, in.CorrelationID, in.SourceSystem, time.Now().UTC(), in.FacilityID, strings.TrimSpace(in.FundingSourceReference)).Scan(&transactionUUID)
 	if err != nil {
 		return Transaction{}, err
 	}

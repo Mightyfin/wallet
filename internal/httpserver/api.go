@@ -125,17 +125,18 @@ func (a *api) disburseLoan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		LegalEntityID       string `json:"legal_entity_id"`
-		DestinationWalletID string `json:"destination_wallet_id"`
-		FacilityID          string `json:"facility_id"`
-		DisbursementID      string `json:"disbursement_id"`
-		Amount              string `json:"amount"`
-		Currency            string `json:"currency"`
+		LegalEntityID          string `json:"legal_entity_id"`
+		DestinationWalletID    string `json:"destination_wallet_id"`
+		FacilityID             string `json:"facility_id"`
+		DisbursementID         string `json:"disbursement_id"`
+		FundingSourceReference string `json:"funding_source_reference"`
+		Amount                 string `json:"amount"`
+		Currency               string `json:"currency"`
 	}
 	if !decodeJSON(w, r, &body) {
 		return
 	}
-	result, err := a.financial.DisburseLoan(r.Context(), financial.LoanDisbursement{LegalEntityID: body.LegalEntityID, TenantID: p.TenantID, DestinationWalletID: body.DestinationWalletID, FacilityID: body.FacilityID, DisbursementID: body.DisbursementID, Amount: body.Amount, Currency: body.Currency, IdempotencyKey: idempotencyKey, CorrelationID: r.Header.Get("X-Correlation-Id"), SourceSystem: p.ApplicationID})
+	result, err := a.financial.DisburseLoan(r.Context(), financial.LoanDisbursement{LegalEntityID: body.LegalEntityID, TenantID: p.TenantID, DestinationWalletID: body.DestinationWalletID, FacilityID: body.FacilityID, DisbursementID: body.DisbursementID, FundingSourceReference: body.FundingSourceReference, Amount: body.Amount, Currency: body.Currency, IdempotencyKey: idempotencyKey, CorrelationID: r.Header.Get("X-Correlation-Id"), SourceSystem: p.ApplicationID})
 	if err != nil {
 		writeFinancialError(w, err)
 		return
