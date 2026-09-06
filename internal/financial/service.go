@@ -290,7 +290,7 @@ func (s *Service) DisburseLoan(ctx context.Context, in LoanDisbursement) (Transa
 		return Transaction{}, fmt.Errorf("invalid amount: %w", ErrConflict)
 	}
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))
-	if in.LegalEntityID == "" || in.TenantID == "" || in.DestinationWalletID == "" || in.FacilityID == "" || in.DisbursementID == "" || in.IdempotencyKey == "" || len(in.Currency) != 3 {
+	if in.TenantID == "" || in.DestinationWalletID == "" || in.FacilityID == "" || in.DisbursementID == "" || in.IdempotencyKey == "" || len(in.Currency) != 3 {
 		return Transaction{}, ErrConflict
 	}
 	if in.CorrelationID == "" {
@@ -298,6 +298,14 @@ func (s *Service) DisburseLoan(ctx context.Context, in LoanDisbursement) (Transa
 	}
 	if in.SourceSystem == "" {
 		in.SourceSystem = "lending-service"
+	}
+	if in.LegalEntityID == "" {
+		if err = s.pool.QueryRow(ctx, `SELECT le.public_id FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id WHERE w.public_id=$1 AND w.tenant_id=$2 AND w.status='active' AND le.status='active'`, in.DestinationWalletID, in.TenantID).Scan(&in.LegalEntityID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Transaction{}, ErrNotFound
+			}
+			return Transaction{}, err
+		}
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {

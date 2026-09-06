@@ -125,7 +125,7 @@ func (a *api) disburseLoan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var body struct {
-		LegalEntityID          string `json:"legal_entity_id"`
+		LegalEntityID          string `json:"legal_entity_id"` // Optional for a delegated facility workload; Wallet resolves it from the destination wallet.
 		DestinationWalletID    string `json:"destination_wallet_id"`
 		FacilityID             string `json:"facility_id"`
 		DisbursementID         string `json:"disbursement_id"`
