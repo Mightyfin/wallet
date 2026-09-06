@@ -65,7 +65,9 @@ func TestLoanFundingAndTransfer(t *testing.T) {
 	if err != nil || destinationBalance.Available.StringFixed(2) != "30.00" {
 		t.Fatalf("destination balance: %#v %v", destinationBalance, err)
 	}
-	repayment := WalletRepayment{LegalEntityID: entity.ID, TenantID: "tenant-a", WalletID: source.ID, FacilityID: "facility-1", Amount: "10.00", Currency: "ZMW", IdempotencyKey: "repay-0001"}
+	// Delegated lending workloads identify the tenant and wallet; Wallet owns
+	// and resolves the legal entity without trusting a caller-supplied value.
+	repayment := WalletRepayment{TenantID: "tenant-a", WalletID: source.ID, FacilityID: "facility-1", Amount: "10.00", Currency: "ZMW", IdempotencyKey: "repay-0001"}
 	postedRepayment, err := s.RepayLoanFromWallet(ctx, repayment)
 	if err != nil {
 		t.Fatal(err)
@@ -78,7 +80,7 @@ func TestLoanFundingAndTransfer(t *testing.T) {
 	if err != nil || repaidBalance.Available.StringFixed(2) != "60.00" {
 		t.Fatalf("repaid balance: %#v %v", repaidBalance, err)
 	}
-	external := SettledExternalRepayment{LegalEntityID: entity.ID, TenantID: "tenant-a", WalletID: source.ID, FacilityID: "facility-1", SettlementReference: "bank-settlement-1", EvidenceID: "evidence-1", Amount: "5.00", Currency: "ZMW", IdempotencyKey: "external-repay-0001"}
+	external := SettledExternalRepayment{TenantID: "tenant-a", WalletID: source.ID, FacilityID: "facility-1", SettlementReference: "bank-settlement-1", EvidenceID: "evidence-1", Amount: "5.00", Currency: "ZMW", IdempotencyKey: "external-repay-0001"}
 	externalPosted, err := s.RecordSettledExternalRepayment(ctx, external)
 	if err != nil {
 		t.Fatal(err)
@@ -104,7 +106,7 @@ func TestLoanFundingAndTransfer(t *testing.T) {
 	if err != nil || reversedSource.Available.StringFixed(2) != "90.00" {
 		t.Fatalf("reversed source: %#v %v", reversedSource, err)
 	}
-	deposit := SettledDeposit{LegalEntityID: entity.ID, TenantID: "tenant-a", WalletID: source.ID, SettlementReference: "bank-deposit-1", EvidenceID: "deposit-evidence-1", Amount: "7.00", Currency: "ZMW", IdempotencyKey: "deposit-0001"}
+	deposit := SettledDeposit{TenantID: "tenant-a", WalletID: source.ID, SettlementReference: "bank-deposit-1", EvidenceID: "deposit-evidence-1", Amount: "7.00", Currency: "ZMW", IdempotencyKey: "deposit-0001"}
 	postedDeposit, err := s.RecordSettledDeposit(ctx, deposit)
 	if err != nil {
 		t.Fatal(err)
