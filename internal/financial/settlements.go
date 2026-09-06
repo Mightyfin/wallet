@@ -30,8 +30,16 @@ func (s *Service) RecordSettledWithdrawal(ctx context.Context, in SettledWithdra
 		return Transaction{}, ErrConflict
 	}
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))
-	if in.LegalEntityID == "" || in.TenantID == "" || in.WalletID == "" || in.HoldID == "" || in.SettlementReference == "" || in.EvidenceID == "" || len(in.IdempotencyKey) < 8 || len(in.IdempotencyKey) > 128 || len(in.Currency) != 3 {
+	if in.TenantID == "" || in.WalletID == "" || in.HoldID == "" || in.SettlementReference == "" || in.EvidenceID == "" || len(in.IdempotencyKey) < 8 || len(in.IdempotencyKey) > 128 || len(in.Currency) != 3 {
 		return Transaction{}, ErrConflict
+	}
+	if in.LegalEntityID == "" {
+		if err = s.pool.QueryRow(ctx, `SELECT le.public_id FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id WHERE w.public_id=$1 AND w.tenant_id=$2 AND w.status='active' AND le.status='active'`, in.WalletID, in.TenantID).Scan(&in.LegalEntityID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Transaction{}, ErrNotFound
+			}
+			return Transaction{}, err
+		}
 	}
 	if in.CorrelationID == "" {
 		in.CorrelationID = newID("cor")

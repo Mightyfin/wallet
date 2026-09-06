@@ -92,10 +92,6 @@ func (a *api) createWallet(w http.ResponseWriter, r *http.Request) {
 func (a *api) balance(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	entityID := strings.TrimSpace(r.URL.Query().Get("legal_entity_id"))
-	if entityID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "legal_entity_id_required"})
-		return
-	}
 	balance, err := a.financial.GetBalance(r.Context(), entityID, p.TenantID, r.PathValue("wallet_id"))
 	if err != nil {
 		writeFinancialError(w, err)

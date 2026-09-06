@@ -32,8 +32,16 @@ func (s *Service) CreateHold(ctx context.Context, in HoldRequest) (Hold, error) 
 		return Hold{}, fmt.Errorf("invalid amount: %w", ErrConflict)
 	}
 	in.Currency = strings.ToUpper(strings.TrimSpace(in.Currency))
-	if in.LegalEntityID == "" || in.TenantID == "" || in.WalletID == "" || in.Reason == "" || len(in.IdempotencyKey) < 8 || len(in.IdempotencyKey) > 128 || len(in.Currency) != 3 {
+	if in.TenantID == "" || in.WalletID == "" || in.Reason == "" || len(in.IdempotencyKey) < 8 || len(in.IdempotencyKey) > 128 || len(in.Currency) != 3 {
 		return Hold{}, ErrConflict
+	}
+	if in.LegalEntityID == "" {
+		if err = s.pool.QueryRow(ctx, `SELECT le.public_id FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id WHERE w.public_id=$1 AND w.tenant_id=$2 AND w.status='active' AND le.status='active'`, in.WalletID, in.TenantID).Scan(&in.LegalEntityID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Hold{}, ErrNotFound
+			}
+			return Hold{}, err
+		}
 	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
@@ -83,6 +91,14 @@ func (s *Service) CreateHold(ctx context.Context, in HoldRequest) (Hold, error) 
 }
 
 func (s *Service) ReleaseHold(ctx context.Context, legalEntityID, tenantID, walletID, holdID string) (Hold, error) {
+	if legalEntityID == "" {
+		if err := s.pool.QueryRow(ctx, `SELECT le.public_id FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id WHERE w.public_id=$1 AND w.tenant_id=$2 AND w.status='active' AND le.status='active'`, walletID, tenantID).Scan(&legalEntityID); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return Hold{}, ErrNotFound
+			}
+			return Hold{}, err
+		}
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return Hold{}, err
