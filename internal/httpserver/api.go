@@ -15,6 +15,7 @@ type api struct{ financial *financial.Service }
 func (a *api) routes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/legal-entities", require("wallet.admin", "wallet-ledger-admin", http.HandlerFunc(a.createLegalEntity)))
 	mux.Handle("POST /v1/wallets", require("wallet.write", "wallet-ledger-admin", http.HandlerFunc(a.createWallet)))
+	mux.Handle("GET /v1/wallets/by-owner/{party_id}", require("wallet.read", "wallet-ledger-admin", http.HandlerFunc(a.walletsForOwner)))
 	mux.Handle("GET /v1/wallets/{wallet_id}/balance", require("wallet.read", "wallet-ledger-admin", http.HandlerFunc(a.balance)))
 	mux.Handle("POST /v1/transfers", require("wallet.transfer", "wallet-ledger-admin", http.HandlerFunc(a.transfer)))
 	mux.Handle("POST /v1/loan-disbursements", require("wallet.disburse", "wallet-ledger-admin", http.HandlerFunc(a.disburseLoan)))
@@ -23,6 +24,22 @@ func (a *api) routes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/deposits/external-settlements", require("wallet.settlement", "wallet-ledger-admin", http.HandlerFunc(a.recordSettledDeposit)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.createHold)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds/{hold_id}/release", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.releaseHold)))
+}
+
+func (a *api) walletsForOwner(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	legalEntityID := strings.TrimSpace(r.URL.Query().Get("legal_entity_id"))
+	partyID := strings.TrimSpace(r.PathValue("party_id"))
+	if legalEntityID == "" || partyID == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "legal_entity_id_and_party_id_required"})
+		return
+	}
+	wallets, err := a.financial.WalletsForOwner(r.Context(), legalEntityID, p.TenantID, partyID, r.URL.Query().Get("currency"))
+	if err != nil {
+		writeFinancialError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": wallets})
 }
 
 func (a *api) createLegalEntity(w http.ResponseWriter, r *http.Request) {

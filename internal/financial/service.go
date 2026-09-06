@@ -49,6 +49,36 @@ type Balance struct {
 	Ledger, Held, Available decimal.Decimal
 }
 
+// WalletsForOwner returns active wallets owned by the canonical Party Platform
+// ID. OwnerID is the cross-platform party reference; balances remain private to
+// the balance endpoint and are intentionally not returned here.
+func (s *Service) WalletsForOwner(ctx context.Context, legalEntityID, tenantID, partyID, currency string) ([]Wallet, error) {
+	if legalEntityID == "" || tenantID == "" || partyID == "" {
+		return nil, fmt.Errorf("invalid wallet owner lookup: %w", ErrConflict)
+	}
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	rows, err := s.pool.Query(ctx, `
+SELECT w.public_id,le.public_id,w.tenant_id,w.owner_type,w.owner_id,w.currency,w.status
+FROM wallets w
+JOIN legal_entities le ON le.id=w.legal_entity_id
+WHERE le.public_id=$1 AND w.tenant_id=$2 AND w.owner_id=$3 AND w.status='active'
+  AND ($4='' OR w.currency=$4)
+ORDER BY w.currency,w.public_id`, legalEntityID, tenantID, partyID, currency)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	wallets := []Wallet{}
+	for rows.Next() {
+		var wallet Wallet
+		if err = rows.Scan(&wallet.ID, &wallet.LegalEntityID, &wallet.TenantID, &wallet.OwnerType, &wallet.OwnerID, &wallet.Currency, &wallet.Status); err != nil {
+			return nil, err
+		}
+		wallets = append(wallets, wallet)
+	}
+	return wallets, rows.Err()
+}
+
 type Transfer struct {
 	LegalEntityID, TenantID, SourceWalletID, DestinationWalletID  string
 	Amount, Currency, IdempotencyKey, CorrelationID, SourceSystem string
