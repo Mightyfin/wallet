@@ -38,11 +38,16 @@ ledger events; products do not change integration.
 | Wallet loan repayment | Customer wallet liability | Loan receivable | Lending/collections workload |
 | Settled external repayment | Bank clearing | Loan receivable | Reconciliation workload |
 | Settled external deposit | Bank clearing | Customer wallet liability | Reconciliation workload |
+| Settled external withdrawal | Customer wallet liability | Bank clearing | Reconciliation workload |
 | Linked reversal | Opposite of original entries | Opposite of original entries | Internal maker-checker workflow only |
 
 Bank statement uploads and receipts first become reconciliation evidence. They are not posting
 authority by themselves. The reconciliation service must match and approve the evidence before it
 can invoke an external-settlement command.
+
+An external withdrawal must reserve the customer's funds with a Wallet hold before Payment Rails
+contacts a provider. Settlement captures that exact hold atomically with the journal posting;
+missing, released, expired, differently valued, or differently denominated holds fail closed.
 
 An approved funding-source reference may be carried with an authorised loan
 disbursement for audit and reconciliation. It is an operational approval

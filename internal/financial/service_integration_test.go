@@ -117,6 +117,23 @@ func TestLoanFundingAndTransfer(t *testing.T) {
 	if err != nil || depositedBalance.Available.StringFixed(2) != "97.00" {
 		t.Fatalf("deposited balance: %#v %v", depositedBalance, err)
 	}
+	withdrawalHold, err := s.CreateHold(ctx, HoldRequest{LegalEntityID: entity.ID, TenantID: "tenant-a", WalletID: source.ID, Amount: "12.00", Currency: "ZMW", Reason: "external_withdrawal", IdempotencyKey: "withdraw-hold-0001"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withdrawal := SettledWithdrawal{LegalEntityID: entity.ID, TenantID: "tenant-a", WalletID: source.ID, HoldID: withdrawalHold.ID, SettlementReference: "bank-withdrawal-1", EvidenceID: "withdrawal-evidence-1", Amount: "12.00", Currency: "ZMW", IdempotencyKey: "withdraw-settle-0001"}
+	postedWithdrawal, err := s.RecordSettledWithdrawal(ctx, withdrawal)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayedWithdrawal, err := s.RecordSettledWithdrawal(ctx, withdrawal)
+	if err != nil || postedWithdrawal.ID != replayedWithdrawal.ID {
+		t.Fatalf("withdrawal replay: %#v %v", replayedWithdrawal, err)
+	}
+	afterWithdrawal, err := s.GetBalance(ctx, entity.ID, "tenant-a", source.ID)
+	if err != nil || afterWithdrawal.Available.StringFixed(2) != "85.00" || !afterWithdrawal.Held.IsZero() {
+		t.Fatalf("withdrawal balance: %#v %v", afterWithdrawal, err)
+	}
 	_, err = s.Transfer(ctx, Transfer{LegalEntityID: entity.ID, TenantID: "tenant-a", SourceWalletID: source.ID, DestinationWalletID: destination.ID, Amount: "1000.00", Currency: "ZMW", IdempotencyKey: "transfer-2"})
 	if !errors.Is(err, ErrInsufficientBalance) {
 		t.Fatalf("expected insufficient balance, got %v", err)

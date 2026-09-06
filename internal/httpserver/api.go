@@ -32,6 +32,7 @@ func (a *api) routes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/loan-repayments/wallet", require("wallet.repay", "wallet-ledger-admin", http.HandlerFunc(a.repayLoanFromWallet)))
 	mux.Handle("POST /v1/loan-repayments/external-settlements", require("wallet.settlement", "wallet-ledger-admin", http.HandlerFunc(a.recordExternalRepayment)))
 	mux.Handle("POST /v1/deposits/external-settlements", require("wallet.settlement", "wallet-ledger-admin", http.HandlerFunc(a.recordSettledDeposit)))
+	mux.Handle("POST /v1/withdrawals/external-settlements", require("wallet.settlement", "wallet-ledger-admin", http.HandlerFunc(a.recordSettledWithdrawal)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.createHold)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds/{hold_id}/release", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.releaseHold)))
 }
@@ -222,6 +223,32 @@ func (a *api) recordSettledDeposit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result, err := a.financial.RecordSettledDeposit(r.Context(), financial.SettledDeposit{LegalEntityID: body.LegalEntityID, TenantID: p.TenantID, WalletID: body.WalletID, SettlementReference: body.SettlementReference, EvidenceID: body.EvidenceID, Amount: body.Amount, Currency: body.Currency, IdempotencyKey: key, CorrelationID: r.Header.Get("X-Correlation-Id"), SourceSystem: p.ApplicationID})
+	if err != nil {
+		writeFinancialError(w, err)
+		return
+	}
+	writeTransaction(w, result)
+}
+
+func (a *api) recordSettledWithdrawal(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	key, ok := idempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		LegalEntityID       string `json:"legal_entity_id"`
+		WalletID            string `json:"wallet_id"`
+		HoldID              string `json:"hold_id"`
+		SettlementReference string `json:"settlement_reference"`
+		EvidenceID          string `json:"evidence_id"`
+		Amount              string `json:"amount"`
+		Currency            string `json:"currency"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	result, err := a.financial.RecordSettledWithdrawal(r.Context(), financial.SettledWithdrawal{LegalEntityID: body.LegalEntityID, TenantID: p.TenantID, WalletID: body.WalletID, HoldID: body.HoldID, SettlementReference: body.SettlementReference, EvidenceID: body.EvidenceID, Amount: body.Amount, Currency: body.Currency, IdempotencyKey: key, CorrelationID: r.Header.Get("X-Correlation-Id"), SourceSystem: p.ApplicationID})
 	if err != nil {
 		writeFinancialError(w, err)
 		return
