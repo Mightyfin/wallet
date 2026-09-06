@@ -15,8 +15,18 @@ type api struct{ financial *financial.Service }
 func (a *api) routes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/legal-entities", require("wallet.admin", "wallet-ledger-admin", http.HandlerFunc(a.createLegalEntity)))
 	mux.Handle("POST /v1/wallets", require("wallet.write", "wallet-ledger-admin", http.HandlerFunc(a.createWallet)))
-	mux.Handle("GET /v1/wallets/by-owner/{party_id}", require("wallet.read", "wallet-ledger-admin", http.HandlerFunc(a.walletsForOwner)))
-	mux.Handle("GET /v1/wallets/{wallet_id}/balance", require("wallet.read", "wallet-ledger-admin", http.HandlerFunc(a.balance)))
+	// Both legacy URLs share this route to avoid intersecting ServeMux wildcards.
+	mux.Handle("GET /v1/wallets/{first}/{second}", require("wallet.read", "wallet-ledger-admin", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.PathValue("first") == "by-owner" {
+			r.SetPathValue("party_id", r.PathValue("second"))
+			a.walletsForOwner(w, r)
+		} else if r.PathValue("second") == "balance" {
+			r.SetPathValue("wallet_id", r.PathValue("first"))
+			a.balance(w, r)
+		} else {
+			http.NotFound(w, r)
+		}
+	})))
 	mux.Handle("POST /v1/transfers", require("wallet.transfer", "wallet-ledger-admin", http.HandlerFunc(a.transfer)))
 	mux.Handle("POST /v1/loan-disbursements", require("wallet.disburse", "wallet-ledger-admin", http.HandlerFunc(a.disburseLoan)))
 	mux.Handle("POST /v1/loan-repayments/wallet", require("wallet.repay", "wallet-ledger-admin", http.HandlerFunc(a.repayLoanFromWallet)))
