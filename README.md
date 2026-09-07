@@ -1,5 +1,10 @@
 # MightyFin Wallet and Ledger
 
+Controlled EFaaS requirements and release evidence are routed through the
+[EFaaS controlled-requirements map](https://github.com/Mightyfin/platform-infrastructure/blob/main/docs/efaas/CONTROLLED-REQUIREMENTS.md).
+This service's financial invariants do not establish regulatory approval, safeguarding evidence
+or authorization to move real customer funds.
+
 Status: **Shared platform foundation under implementation**
 
 This is the authoritative operational financial subledger for MightyFin Direct Embedded Finance,
@@ -58,6 +63,10 @@ transactional outbox. Capability-specific HTTP commands use shared-IDP OIDC toke
 environment and scope claims. Generic journal posting and reversal HTTP APIs are intentionally
 absent. Live rail initiation remains disabled until a licensed provider and reconciliation control
 are configured.
+
+In the sandbox environment only, the service also exposes synthetic funding and wallet transaction
+history for EFaaS certification. Synthetic funding is journaled under `sandbox.wallet.funding`,
+emits `sandbox.wallet.funded`, and is not available when Wallet/Ledger runs in staging or production.
 
 The machine-readable internal contract lives in the separate API Contracts repository at
 `openapi/wallet-ledger/wallet-ledger.openapi.yaml`.

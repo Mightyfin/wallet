@@ -3,6 +3,7 @@ package httpserver
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -10,7 +11,10 @@ import (
 	"github.com/Mightyfin/wallet-ledger/internal/financial"
 )
 
-type api struct{ financial *financial.Service }
+type api struct {
+	financial   *financial.Service
+	environment string
+}
 
 func (a *api) routes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/legal-entities", require("wallet.admin", "wallet-ledger-admin", http.HandlerFunc(a.createLegalEntity)))
@@ -23,10 +27,16 @@ func (a *api) routes(mux *http.ServeMux) {
 		} else if r.PathValue("second") == "balance" {
 			r.SetPathValue("wallet_id", r.PathValue("first"))
 			a.balance(w, r)
+		} else if r.PathValue("second") == "transactions" {
+			r.SetPathValue("wallet_id", r.PathValue("first"))
+			a.walletTransactions(w, r)
 		} else {
 			http.NotFound(w, r)
 		}
 	})))
+	if a.environment == "sandbox" {
+		mux.Handle("POST /v1/sandbox/wallets/{wallet_id}/funding", require("wallet.write", "wallet-ledger-admin", http.HandlerFunc(a.fundSandboxWallet)))
+	}
 	mux.Handle("POST /v1/transfers", require("wallet.transfer", "wallet-ledger-admin", http.HandlerFunc(a.transfer)))
 	mux.Handle("POST /v1/loan-disbursements", require("wallet.disburse", "wallet-ledger-admin", http.HandlerFunc(a.disburseLoan)))
 	mux.Handle("POST /v1/loan-repayments/wallet", require("wallet.repay", "wallet-ledger-admin", http.HandlerFunc(a.repayLoanFromWallet)))
@@ -35,6 +45,56 @@ func (a *api) routes(mux *http.ServeMux) {
 	mux.Handle("POST /v1/withdrawals/external-settlements", require("wallet.settlement", "wallet-ledger-admin", http.HandlerFunc(a.recordSettledWithdrawal)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.createHold)))
 	mux.Handle("POST /v1/wallets/{wallet_id}/holds/{hold_id}/release", require("wallet.hold", "wallet-ledger-admin", http.HandlerFunc(a.releaseHold)))
+}
+
+func (a *api) walletTransactions(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	legalEntityID := strings.TrimSpace(r.URL.Query().Get("legal_entity_id"))
+	limit := 20
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		if _, err := fmt.Sscanf(raw, "%d", &limit); err != nil || limit < 1 || limit > 100 {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid_limit"})
+			return
+		}
+	}
+	items, hasMore, err := a.financial.WalletTransactions(r.Context(), legalEntityID, p.TenantID, r.PathValue("wallet_id"), r.URL.Query().Get("cursor"), limit)
+	if err != nil {
+		writeFinancialError(w, err)
+		return
+	}
+	var nextCursor *string
+	if hasMore && len(items) > 0 {
+		next := items[len(items)-1].ID
+		nextCursor = &next
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"data": items, "page": map[string]any{"has_more": hasMore, "next_cursor": nextCursor}})
+}
+
+func (a *api) fundSandboxWallet(w http.ResponseWriter, r *http.Request) {
+	p := principal(r)
+	key, ok := idempotencyKey(w, r)
+	if !ok {
+		return
+	}
+	var body struct {
+		LegalEntityID    string `json:"legal_entity_id"`
+		Amount           string `json:"amount"`
+		Currency         string `json:"currency"`
+		PartnerReference string `json:"partner_reference"`
+	}
+	if !decodeJSON(w, r, &body) {
+		return
+	}
+	result, err := a.financial.FundSandboxWallet(r.Context(), financial.SandboxFunding{
+		LegalEntityID: body.LegalEntityID, TenantID: p.TenantID, WalletID: r.PathValue("wallet_id"),
+		Amount: body.Amount, Currency: body.Currency, PartnerReference: body.PartnerReference,
+		IdempotencyKey: key, CorrelationID: r.Header.Get("X-Correlation-Id"), SourceSystem: p.ApplicationID,
+	})
+	if err != nil {
+		writeFinancialError(w, err)
+		return
+	}
+	writeTransaction(w, result)
 }
 
 func (a *api) walletsForOwner(w http.ResponseWriter, r *http.Request) {

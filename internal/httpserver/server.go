@@ -18,7 +18,7 @@ type readiness interface{ Ping(context.Context) error }
 
 func New(cfg config.Config, logger *slog.Logger, database readiness, service *financial.Service, verifier auth.Verifier) *http.Server {
 	mux := http.NewServeMux()
-	(&api{financial: service}).routes(mux)
+	(&api{financial: service, environment: cfg.Environment}).routes(mux)
 	mux.HandleFunc("GET /health/live", func(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, map[string]string{"status": "ok", "service": "wallet-ledger-api", "environment": cfg.Environment})
 	})
