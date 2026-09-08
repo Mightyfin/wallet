@@ -21,8 +21,23 @@ func TestClaimAndPublish(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	id := fmt.Sprintf("evt_outbox_test_%d", time.Now().UnixNano())
-	_, err = pool.Exec(ctx, `INSERT INTO outbox_events(public_id,event_type,aggregate_type,aggregate_id,payload) VALUES($1,'test.event','test','test-1','{}')`, id)
+	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
+	entityID := "le_outbox_test_" + suffix
+	walletID := "wal_outbox_test_" + suffix
+	id := "evt_outbox_test_" + suffix
+	var entityUUID string
+	err = pool.QueryRow(ctx, `INSERT INTO legal_entities(public_id,name,country_code,base_currency,status)
+		VALUES($1,'Outbox integration test','ZM','ZMW','active') RETURNING id::text`, entityID).Scan(&entityUUID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO wallets(public_id,legal_entity_id,tenant_id,owner_type,owner_id,currency,status)
+		VALUES($1,$2::uuid,'tenant-outbox-test','system',$3,'ZMW','active')`, walletID, entityUUID, "owner-"+suffix)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = pool.Exec(ctx, `INSERT INTO outbox_events(public_id,event_type,aggregate_type,aggregate_id,payload,occurred_at)
+		VALUES($1,'test.event','wallet',$2,'{}','2000-01-01T00:00:00Z')`, id, walletID)
 	if err != nil {
 		t.Fatal(err)
 	}
