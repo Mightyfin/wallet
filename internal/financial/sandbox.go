@@ -117,6 +117,18 @@ func (s *Service) WalletTransactions(ctx context.Context, legalEntityID, tenantI
 	if legalEntityID == "" || tenantID == "" || walletID == "" || limit < 1 || limit > 100 {
 		return nil, false, ErrConflict
 	}
+	var walletExists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS(
+		SELECT 1 FROM wallets w
+		JOIN legal_entities le ON le.id=w.legal_entity_id
+		WHERE le.public_id=$1 AND w.tenant_id=$2 AND w.public_id=$3
+		  AND le.status='active' AND w.status='active'
+	)`, legalEntityID, tenantID, walletID).Scan(&walletExists); err != nil {
+		return nil, false, err
+	}
+	if !walletExists {
+		return nil, false, ErrNotFound
+	}
 	rows, err := s.pool.Query(ctx, `SELECT jt.public_id,
 		CASE
 		  WHEN jt.transaction_type='sandbox_funding' THEN 'deposit'

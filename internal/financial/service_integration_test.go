@@ -33,6 +33,14 @@ func TestLoanFundingAndTransfer(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	emptyTransactions, hasMore, err := s.WalletTransactions(ctx, entity.ID, "tenant-a", source.ID, "", 20)
+	if err != nil || len(emptyTransactions) != 0 || hasMore {
+		t.Fatalf("valid empty wallet history: items=%d hasMore=%v err=%v", len(emptyTransactions), hasMore, err)
+	}
+	_, _, err = s.WalletTransactions(ctx, entity.ID, "tenant-b", source.ID, "", 20)
+	if !errors.Is(err, ErrNotFound) {
+		t.Fatalf("cross-tenant wallet history error=%v, want ErrNotFound", err)
+	}
 	disbursement := LoanDisbursement{LegalEntityID: entity.ID, TenantID: "tenant-a", DestinationWalletID: source.ID, FacilityID: "facility-1", DisbursementID: "drawdown-1", Amount: "100.00", Currency: "ZMW", IdempotencyKey: "loan-0001"}
 	first, err := s.DisburseLoan(ctx, disbursement)
 	if err != nil {
