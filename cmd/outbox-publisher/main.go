@@ -35,7 +35,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
-	publisher, closeConnection, err := eventbus.NewPublisher(natsURL, strings.TrimSpace(os.Getenv("WALLET_LEDGER_NATS_TOKEN")))
+	publisher, closeConnection, err := eventbus.NewPublisher(natsURL, strings.TrimSpace(os.Getenv("WALLET_LEDGER_NATS_TOKEN")), cfg.Environment)
 	if err != nil {
 		logger.Error("NATS unavailable", "error", err)
 		os.Exit(1)
