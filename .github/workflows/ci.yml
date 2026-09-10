@@ -26,6 +26,10 @@ jobs:
       WALLET_LEDGER_TEST_DATABASE_URL: postgres://wallet:test-only@127.0.0.1:5432/wallet_ledger_test?sslmode=disable
     steps:
       - uses: actions/checkout@v4
+      - name: Start isolated JetStream test broker
+        run: |
+          docker run -d --name ci-nats -p 127.0.0.1:4222:4222 nats:2.11-alpine -js
+          echo "EVENTBUS_TEST_NATS_URL=nats://127.0.0.1:4222" >> "$GITHUB_ENV"
       - uses: actions/setup-go@v5
         with: {go-version: '1.25.x', cache: true}
       - run: gofmt -w ./cmd ./internal && git diff --exit-code
