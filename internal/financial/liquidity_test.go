@@ -145,4 +145,5 @@ func TestLenderLiquidityReservation(t *testing.T) {
 	if _, err = s.ReserveLenderLiquidity(ctx, changed); !errors.Is(err, ErrNotFound) {
 		t.Fatal("shared clearing accepted", err)
 	}
+	testGoodsCredit(t, ctx, s, winner, first)
 }
