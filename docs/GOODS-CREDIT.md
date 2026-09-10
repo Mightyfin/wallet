@@ -1,7 +1,8 @@
 # Wallet-first goods credit
 
-Status: internal posting foundation. No HTTP execution endpoint, deployment or
-tenant activation is included. Cash-disbursement guards remain enabled.
+Status: internal posting foundation plus dedicated registration/read HTTP routes.
+No HTTP draw endpoint, deployment or tenant activation is included.
+Cash-disbursement guards remain enabled.
 
 The initial destination is the approved supplier's MightyFin wallet, not a bank
 account or mobile-money account. The borrower receives no cash. On each use,
@@ -11,8 +12,14 @@ immutable journal. Unused purchasing capacity is not a wallet cash balance.
 
 ## Boundaries
 
-Facility must authenticate and deliver the approved instruction. This package
-does not make credit decisions; an `AuthorizedBy` string is not authentication.
+Facility must deliver the approved instruction through a dedicated authenticated
+workload. Registration requires `goods-credit-authorizer` and
+`platform-tenant-delegator` roles plus `wallet.goods.authorize`; historical reads
+require the same roles plus `wallet.goods.read`. Environment and delegation must
+match. The HTTP handler records the authenticated subject, rejects caller actor or
+tenant fields, and verifies the exact facility/reservation/legal-entity binding.
+It returns the saved record, not a request echo. This package does not decide
+credit; the upstream staff approval/durable workflow is still pending.
 Do not expose these methods as tenant-controlled approval APIs. Billing &
 Collections must consume actual used-credit events for debt servicing; it must
 not treat the unused approved amount as disbursed principal.
