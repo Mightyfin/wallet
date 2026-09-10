@@ -17,6 +17,7 @@ type api struct {
 }
 
 func (a *api) routes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /v1/internal/lender-liquidity/reservations", a.reserveLenderLiquidity)
 	mux.Handle("POST /v1/legal-entities", require("wallet.admin", "wallet-ledger-admin", http.HandlerFunc(a.createLegalEntity)))
 	mux.Handle("POST /v1/wallets", require("wallet.write", "wallet-ledger-admin", http.HandlerFunc(a.createWallet)))
 	// Both legacy URLs share this route to avoid intersecting ServeMux wildcards.
