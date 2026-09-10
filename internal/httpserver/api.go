@@ -338,10 +338,8 @@ func (a *api) createHold(w http.ResponseWriter, r *http.Request) {
 func (a *api) releaseHold(w http.ResponseWriter, r *http.Request) {
 	p := principal(r)
 	entityID := strings.TrimSpace(r.URL.Query().Get("legal_entity_id"))
-	if entityID == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "legal_entity_id_required"})
-		return
-	}
+	// As with hold creation, resolve an omitted entity through the authenticated
+	// tenant's wallet. The financial service still enforces wallet ownership.
 	hold, err := a.financial.ReleaseHold(r.Context(), entityID, p.TenantID, r.PathValue("wallet_id"), r.PathValue("hold_id"))
 	if err != nil {
 		writeFinancialError(w, err)

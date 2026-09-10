@@ -111,6 +111,9 @@ func sameHoldExpiry(a, b *time.Time) bool {
 }
 
 func (s *Service) ReleaseHold(ctx context.Context, legalEntityID, tenantID, walletID, holdID string) (Hold, error) {
+	if tenantID == "" || walletID == "" || holdID == "" {
+		return Hold{}, ErrConflict
+	}
 	if legalEntityID == "" {
 		if err := s.pool.QueryRow(ctx, `SELECT le.public_id FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id WHERE w.public_id=$1 AND w.tenant_id=$2 AND w.status='active' AND le.status='active'`, walletID, tenantID).Scan(&legalEntityID); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
@@ -125,6 +128,21 @@ func (s *Service) ReleaseHold(ctx context.Context, legalEntityID, tenantID, wall
 	}
 	defer tx.Rollback(ctx)
 	var hold Hold
+	err = tx.QueryRow(ctx, `SELECT h.public_id,w.public_id,h.amount::text,h.currency,h.reason,h.status,h.expires_at
+		FROM balance_holds h JOIN wallets w ON w.id=h.wallet_id JOIN legal_entities le ON le.id=w.legal_entity_id
+		WHERE le.public_id=$1 AND w.tenant_id=$2 AND w.public_id=$3 AND h.public_id=$4 FOR UPDATE OF h`, legalEntityID, tenantID, walletID, holdID).Scan(&hold.ID, &hold.WalletID, &hold.Amount, &hold.Currency, &hold.Reason, &hold.Status, &hold.ExpiresAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Hold{}, ErrNotFound
+	}
+	if err != nil {
+		return Hold{}, err
+	}
+	if hold.Status == "released" {
+		return hold, nil
+	}
+	if hold.Status != "active" {
+		return Hold{}, ErrConflict
+	}
 	err = tx.QueryRow(ctx, `UPDATE balance_holds h SET status='released',updated_at=now() FROM wallets w,legal_entities le
 		WHERE h.wallet_id=w.id AND le.id=w.legal_entity_id AND le.public_id=$1 AND w.tenant_id=$2 AND w.public_id=$3 AND h.public_id=$4 AND h.status='active'
 		RETURNING h.public_id,w.public_id,h.amount::text,h.currency,h.reason,h.status,h.expires_at`, legalEntityID, tenantID, walletID, holdID).Scan(&hold.ID, &hold.WalletID, &hold.Amount, &hold.Currency, &hold.Reason, &hold.Status, &hold.ExpiresAt)
