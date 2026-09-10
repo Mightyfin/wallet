@@ -227,4 +227,22 @@ func TestGoodsAuthorizationHTTPPersistenceAndIsolation(t *testing.T) {
 	if err = db.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE event_type='goods.credit.use.posted' AND payload->>'authorization_id'=$1`, id).Scan(&events); err != nil || events != 1 {
 		t.Fatal("use event", events, err)
 	}
+	if os.Getenv("GOODS_CONNECTED_FACILITY_ROOT") != "" {
+		a, e := s.ReadGoodsAuthorization(ctx, tenant, entity.ID, id)
+		if e != nil {
+			t.Fatal(e)
+		}
+		testConnectedFacilityAdapter(t, h, a)
+		c, e = s.ReadGoodsCapacity(ctx, tenant, entity.ID, id)
+		if e != nil || c.UsedAmount != "30.00" || c.RemainingAmount != "40.00" || c.UseCount != 2 {
+			t.Fatal("connected capacity", c, e)
+		}
+		balance, err = s.GetBalance(ctx, entity.ID, tenant, supplier.ID)
+		if err != nil || balance.Ledger.StringFixed(2) != "30.00" {
+			t.Fatal("connected supplier balance", balance, err)
+		}
+		if err = db.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE event_type='goods.credit.use.posted' AND payload->>'authorization_id'=$1`, id).Scan(&events); err != nil || events != 2 {
+			t.Fatal("connected event count", events, err)
+		}
+	}
 }
