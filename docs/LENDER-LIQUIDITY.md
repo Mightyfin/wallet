@@ -21,6 +21,17 @@ scoped from the stored reservation, not untrusted event payload fields.
 
 ## Release requirements and remaining work
 
+Read-only verification is now available at
+`GET /v1/internal/lender-liquidity/reservations/{reservation_id}?legal_entity_id=...`.
+It requires separate `wallet.liquidity.read` scope and `lender-liquidity-reader`
+role, plus the existing platform delegation role and acting headers. The tenant
+comes from verified delegation, not a query parameter. A foreign tenant/entity
+combination returns 404. The response includes the exact reservation, environment,
+legal entity, current source-active flag and verification time. Inactive source
+accounts retain readable reservation history; they do not appear active.
+No lender account balance, other tenant allocation or requesting actor is exposed.
+This read does not retry a reservation, change state or authorize payment.
+
 Apply migration 00003 before deploying the API or updated outbox worker. No
 production migration/deployment occurred. Automatic down migration deliberately
 fails because deleting reservation history is unsafe.

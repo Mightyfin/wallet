@@ -101,6 +101,7 @@ func TestLenderLiquidityReservation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	testLiquidityRead(t, ctx, s, winner, first)
 	for range 4 {
 		wg.Add(1)
 		go func() {
@@ -131,7 +132,9 @@ func TestLenderLiquidityReservation(t *testing.T) {
 	if _, err = pool.Exec(ctx, `DELETE FROM lender_liquidity_reservations WHERE account_id=$1`, accountID); err == nil {
 		t.Fatal("history removed")
 	}
-	if _,err=pool.Exec(ctx,`UPDATE ledger_accounts SET account_purpose='other' WHERE id=$1`,accountID);err==nil{t.Fatal("reserved account relabelled")}
+	if _, err = pool.Exec(ctx, `UPDATE ledger_accounts SET account_purpose='other' WHERE id=$1`, accountID); err == nil {
+		t.Fatal("reserved account relabelled")
+	}
 	var clearing string
 	if err = pool.QueryRow(ctx, `SELECT public_id FROM ledger_accounts WHERE legal_entity_id=$1 AND account_purpose='bank_clearing'`, entityID).Scan(&clearing); err != nil {
 		t.Fatal(err)

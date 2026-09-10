@@ -17,6 +17,7 @@ type api struct {
 }
 
 func (a *api) routes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /v1/internal/lender-liquidity/reservations/{reservation_id}", a.readLenderLiquidity)
 	mux.HandleFunc("POST /v1/internal/wallet-destinations/verify", a.verifyDestination)
 	mux.HandleFunc("POST /v1/internal/lender-liquidity/reservations", a.reserveLenderLiquidity)
 	mux.Handle("POST /v1/legal-entities", require("wallet.admin", "wallet-ledger-admin", http.HandlerFunc(a.createLegalEntity)))
