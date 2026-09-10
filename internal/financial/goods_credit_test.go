@@ -32,6 +32,19 @@ func testGoodsCredit(t *testing.T, ctx context.Context, s *Service, in Liquidity
 	if err = s.RegisterGoodsAuthorization(ctx, a); err != nil {
 		t.Fatal(err)
 	}
+	assertCapacity := func(used, remaining string, count int64) {
+		t.Helper()
+		c, e := s.ReadGoodsCapacity(ctx, in.TenantID, in.LegalEntityID, a.ID)
+		if e != nil || c.ApprovedAmount != "70.00" || c.UsedAmount != used || c.RemainingAmount != remaining || c.ExpiredUnusedAmount != "0.00" || c.UseCount != count || c.State != "active" || c.AsOf.IsZero() {
+			t.Fatalf("capacity: %+v %v", c, e)
+		}
+	}
+	assertCapacity("0.00", "70.00", 0)
+	for _, scope := range [][2]string{{"other", in.LegalEntityID}, {in.TenantID, "other"}} {
+		if _, e := s.ReadGoodsCapacity(ctx, scope[0], scope[1], a.ID); !errors.Is(e, ErrNotFound) {
+			t.Fatal("foreign capacity", e)
+		}
+	}
 	if err = s.RegisterGoodsAuthorization(ctx, a); err != nil {
 		t.Fatal("authorization retry", err)
 	}
@@ -71,6 +84,7 @@ func testGoodsCredit(t *testing.T, ctx context.Context, s *Service, in Liquidity
 	if err != nil || !balance.Ledger.IsZero() {
 		t.Fatal("rollback left money", balance, err)
 	}
+	assertCapacity("0.00", "70.00", 0)
 	var wg sync.WaitGroup
 	ids := make(chan string, 8)
 	for range 8 {
@@ -97,6 +111,7 @@ func testGoodsCredit(t *testing.T, ctx context.Context, s *Service, in Liquidity
 	if first == "" {
 		t.Fatal("no successful draw")
 	}
+	assertCapacity("20.00", "50.00", 1)
 	if _, err = s.PostGoodsUse(ctx, a.TenantID, a.ID, "retry-after-rollback", "21", "test"); !errors.Is(err, ErrConflict) {
 		t.Fatal("changed replay", err)
 	}
@@ -128,6 +143,10 @@ func testGoodsCredit(t *testing.T, ctx context.Context, s *Service, in Liquidity
 	}
 	if _, err = s.PostGoodsUse(ctx, a.TenantID, a.ID, "excess", "0.01", "test"); !errors.Is(err, ErrInsufficientBalance) {
 		t.Fatal("exhausted capacity", err)
+	}
+	c, e := s.ReadGoodsCapacity(ctx, in.TenantID, in.LegalEntityID, a.ID)
+	if e != nil || c.UsedAmount != "70.00" || c.RemainingAmount != "0.00" || c.ExpiredUnusedAmount != "0.00" || c.UseCount != 3 || c.State != "exhausted" {
+		t.Fatalf("exhausted snapshot: %+v %v", c, e)
 	}
 	balance, err = s.GetBalance(ctx, in.LegalEntityID, in.TenantID, supplier.ID)
 	if err != nil || balance.Ledger.StringFixed(2) != "70.00" {

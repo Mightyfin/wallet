@@ -133,4 +133,21 @@ func TestGoodsAuthorizationHTTPPersistenceAndIsolation(t *testing.T) {
 	if err != nil || !balance.Ledger.IsZero() {
 		t.Fatal("registration funded supplier", balance, err)
 	}
+	capacityPath := path + "/" + id + "/capacity?legal_entity_id=" + entity.ID
+	for _, scope := range []string{tenant, "other-tenant"} {
+		w := request("GET", capacityPath, scope, nil)
+		if scope != tenant {
+			if w.Code != 404 {
+				t.Fatal("foreign capacity", w.Code, w.Body.String())
+			}
+			continue
+		}
+		var reply struct {
+			Capacity    financial.GoodsCapacity `json:"capacity"`
+			Environment string                  `json:"environment"`
+		}
+		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &reply) != nil || reply.Capacity.RemainingAmount != "70.00" || reply.Capacity.UsedAmount != "0.00" || reply.Capacity.TenantID != tenant || reply.Environment != "sandbox" || w.Header().Get("Cache-Control") != "no-store" {
+			t.Fatal("capacity response", w.Code, w.Body.String())
+		}
+	}
 }

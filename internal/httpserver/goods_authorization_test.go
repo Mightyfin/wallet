@@ -11,7 +11,11 @@ import (
 )
 
 func TestGoodsAuthorizationPermissions(t *testing.T) {
-	for _, method := range []string{"POST", "GET"} {
+	for _, operation := range []string{"POST", "GET", "capacity"} {
+		method := operation
+		if operation == "capacity" {
+			method = "GET"
+		}
 		for _, tc := range []struct {
 			name, tenant, role, scope, environment string
 			want                                   int
@@ -23,7 +27,7 @@ func TestGoodsAuthorizationPermissions(t *testing.T) {
 			{"wrong-environment", "", "goods-credit-authorizer", "wallet.goods.authorize", "production", 403},
 			{"valid-authority-invalid-body", "", "goods-credit-authorizer", "wallet.goods.authorize", "sandbox", 400},
 		} {
-			t.Run(method+"/"+tc.name, func(t *testing.T) {
+			t.Run(operation+"/"+tc.name, func(t *testing.T) {
 				scope := tc.scope
 				if method == "GET" && scope == "wallet.goods.authorize" {
 					scope = "wallet.goods.read"
@@ -35,6 +39,9 @@ func TestGoodsAuthorizationPermissions(t *testing.T) {
 				path := "/v1/internal/goods-credit/authorizations"
 				if method == "GET" {
 					path += "/gca_fac?tenant_id=override"
+				}
+				if operation == "capacity" {
+					path = "/v1/internal/goods-credit/authorizations/gca_fac/capacity?tenant_id=override"
 				}
 				r := httptest.NewRequest(method, path, strings.NewReader(`{"authorized_by":"forged"}`))
 				r.Header.Set("Authorization", "Bearer synthetic")
