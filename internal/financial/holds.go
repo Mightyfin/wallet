@@ -27,6 +27,12 @@ type Hold struct {
 }
 
 func (s *Service) CreateHold(ctx context.Context, in HoldRequest) (Hold, error) {
+	if in.ExpiresAt != nil {
+		// PostgreSQL stores microsecond precision. Compare the persisted instant,
+		// not a caller's time zone or sub-microsecond representation.
+		expires := in.ExpiresAt.UTC().Truncate(time.Microsecond)
+		in.ExpiresAt = &expires
+	}
 	amount, err := decimal.NewFromString(in.Amount)
 	if err != nil || !amount.IsPositive() || amount.Exponent() < -2 {
 		return Hold{}, fmt.Errorf("invalid amount: %w", ErrConflict)
@@ -53,7 +59,7 @@ func (s *Service) CreateHold(ctx context.Context, in HoldRequest) (Hold, error) 
 		FROM balance_holds h JOIN wallets w ON w.id=h.wallet_id JOIN legal_entities le ON le.id=w.legal_entity_id
 		WHERE le.public_id=$1 AND w.tenant_id=$2 AND w.public_id=$3 AND h.idempotency_key=$4`, in.LegalEntityID, in.TenantID, in.WalletID, in.IdempotencyKey).Scan(&existing.ID, &existing.WalletID, &existing.Amount, &existing.Currency, &existing.Reason, &existing.Status, &existing.ExpiresAt)
 	if err == nil {
-		if existing.Amount != amount.StringFixed(2) || existing.Currency != in.Currency || existing.Reason != in.Reason {
+		if existing.Amount != amount.StringFixed(2) || existing.Currency != in.Currency || existing.Reason != in.Reason || !sameHoldExpiry(existing.ExpiresAt, in.ExpiresAt) {
 			return Hold{}, ErrConflict
 		}
 		return existing, nil
@@ -62,15 +68,22 @@ func (s *Service) CreateHold(ctx context.Context, in HoldRequest) (Hold, error) 
 		return Hold{}, err
 	}
 	var walletUUID, accountUUID string
-	err = tx.QueryRow(ctx, `SELECT w.id::text,a.id::text FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id JOIN ledger_accounts a ON a.wallet_id=w.id AND a.account_purpose='wallet_available' WHERE le.public_id=$1 AND w.tenant_id=$2 AND w.public_id=$3 AND w.currency=$4 AND w.status='active' FOR UPDATE OF w,a`, in.LegalEntityID, in.TenantID, in.WalletID, in.Currency).Scan(&walletUUID, &accountUUID)
+	err = tx.QueryRow(ctx, `SELECT w.id::text,a.id::text FROM wallets w JOIN legal_entities le ON le.id=w.legal_entity_id JOIN ledger_accounts a ON a.wallet_id=w.id AND a.account_purpose='wallet_available' WHERE le.public_id=$1 AND w.tenant_id=$2 AND w.public_id=$3 AND w.currency=$4 AND w.status='active' AND le.status='active' FOR UPDATE OF w,a`, in.LegalEntityID, in.TenantID, in.WalletID, in.Currency).Scan(&walletUUID, &accountUUID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Hold{}, ErrNotFound
 	}
 	if err != nil {
 		return Hold{}, err
 	}
+	var admissionAt time.Time
+	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&admissionAt); err != nil {
+		return Hold{}, err
+	}
+	if in.ExpiresAt != nil && !in.ExpiresAt.After(admissionAt) {
+		return Hold{}, ErrConflict
+	}
 	var availableText string
-	err = tx.QueryRow(ctx, `SELECT (COALESCE(SUM(CASE WHEN e.side=a.normal_side THEN e.amount ELSE -e.amount END),0)-COALESCE((SELECT SUM(h.amount) FROM balance_holds h WHERE h.wallet_id=$1 AND h.status='active' AND (h.expires_at IS NULL OR h.expires_at>now())),0))::text FROM ledger_accounts a LEFT JOIN journal_entries e ON e.account_id=a.id WHERE a.id=$2 GROUP BY a.id`, walletUUID, accountUUID).Scan(&availableText)
+	err = tx.QueryRow(ctx, `SELECT (COALESCE(SUM(CASE WHEN e.side=a.normal_side THEN e.amount ELSE -e.amount END),0)-COALESCE((SELECT SUM(h.amount) FROM balance_holds h WHERE h.wallet_id=$1 AND h.status='active' AND (h.expires_at IS NULL OR h.expires_at>$3)),0))::text FROM ledger_accounts a LEFT JOIN journal_entries e ON e.account_id=a.id WHERE a.id=$2 GROUP BY a.id`, walletUUID, accountUUID, admissionAt).Scan(&availableText)
 	if err != nil {
 		return Hold{}, err
 	}
@@ -88,6 +101,13 @@ func (s *Service) CreateHold(ctx context.Context, in HoldRequest) (Hold, error) 
 		return Hold{}, err
 	}
 	return hold, tx.Commit(ctx)
+}
+
+func sameHoldExpiry(a, b *time.Time) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return a.Equal(*b)
 }
 
 func (s *Service) ReleaseHold(ctx context.Context, legalEntityID, tenantID, walletID, holdID string) (Hold, error) {
