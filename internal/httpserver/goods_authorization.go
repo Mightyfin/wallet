@@ -16,9 +16,13 @@ import (
 // This boundary accepts only a dedicated Facility workload, never a tenant or
 // generic wallet administrator. Registration records authority; it moves no money.
 func (a *api) goodsAuthority(w http.ResponseWriter, r *http.Request, scope string) bool {
+	return a.goodsWorkload(w, r, "goods-credit-authorizer", scope)
+}
+
+func (a *api) goodsWorkload(w http.ResponseWriter, r *http.Request, role, scope string) bool {
 	p := principal(r)
 	w.Header().Set("Cache-Control", "no-store")
-	if !p.HasRole("goods-credit-authorizer") || !p.HasRole("platform-tenant-delegator") || !p.HasScope(scope) ||
+	if !p.HasRole(role) || !p.HasRole("platform-tenant-delegator") || !p.HasScope(scope) ||
 		p.Subject == "" || p.TenantID == "" || p.ApplicationID == "" || p.Environment != a.environment ||
 		strings.TrimSpace(r.Header.Get("X-Acting-Tenant-Id")) != p.TenantID ||
 		strings.TrimSpace(r.Header.Get("X-Acting-Application-Id")) != p.ApplicationID {

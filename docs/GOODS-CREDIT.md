@@ -1,7 +1,7 @@
 # Wallet-first goods credit
 
-Status: internal posting foundation plus dedicated registration/read/capacity HTTP routes.
-No HTTP draw endpoint, deployment or tenant activation is included.
+Status: internal posting foundation plus dedicated registration/read/capacity and
+purchase execution/recovery HTTP routes. No deployment or tenant activation is included.
 Cash-disbursement guards remain enabled.
 
 The initial destination is the approved supplier's MightyFin wallet, not a bank
@@ -56,7 +56,31 @@ expired unused in this view; no ledger entry or liquidity release occurs. Used i
 the total purchased, not the outstanding debt after repayments. Billing owns debt
 servicing. State `active` means unexpired and not fully used, not permission to
 spend: account status and all execution checks still apply when a purchase is made.
-This read neither reserves additional credit nor enables the missing draw API.
+This read neither reserves additional credit nor authorizes a purchase.
+
+### Internal purchase execution and recovery
+
+`POST /v1/internal/goods-credit/authorizations/{authorization_id}/uses` accepts
+only `legal_entity_id`, `use_id` and a positive two-decimal string `amount`.
+`Idempotency-Key` must exactly match `use_id`. The approved supplier, borrower,
+currency and order come from the immutable authorization, not the request.
+
+Execution requires `goods-credit-executor` AND `platform-tenant-delegator` roles,
+`wallet.goods.use` scope and exact environment/delegation. Registration-only
+credentials and generic wallet administrators are rejected. No such credential
+has been provisioned by this checkpoint. Financial effects still use the same
+atomic posting engine and database guards; no second balance implementation.
+
+`GET /v1/internal/goods-credit/authorizations/{authorization_id}/uses/{use_id}?legal_entity_id=...`
+requires the execution roles and `wallet.goods.read`. Both routes return the saved
+use, original actor, approved parties/order and journal/correlation references.
+After a lost response, read this same reference or repeat the identical request.
+Do not use a new reference or assume a timeout means no posting occurred.
+
+These are workload-only operations, not tenant APIs. Facility purchase request
+coordination, consent/commercial checks and Billing used-debt servicing remain
+unfinished. Goods product/acceptance gates remain closed until that complete
+journey is implemented and tested. No cash payout route is enabled here.
 
 ### Tests
 

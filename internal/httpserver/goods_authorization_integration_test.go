@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -149,5 +150,81 @@ func TestGoodsAuthorizationHTTPPersistenceAndIsolation(t *testing.T) {
 		if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &reply) != nil || reply.Capacity.RemainingAmount != "70.00" || reply.Capacity.UsedAmount != "0.00" || reply.Capacity.TenantID != tenant || reply.Environment != "sandbox" || w.Header().Get("Cache-Control") != "no-store" {
 			t.Fatal("capacity response", w.Code, w.Body.String())
 		}
+	}
+	// Execute only with a separate workload, then recover via a persisted read.
+	p.Roles = map[string]struct{}{"goods-credit-executor": {}, "platform-tenant-delegator": {}}
+	p.Scopes = map[string]struct{}{"wallet.goods.use": {}, "wallet.goods.read": {}}
+	h = authenticate(fakeVerifier{principal: p}, false, mux)
+	usePath := path + "/" + id + "/uses"
+	useBody := map[string]any{"legal_entity_id": entity.ID, "use_id": id, "amount": "20.00"}
+	if w := request("POST", usePath, "other-tenant", useBody); w.Code != 404 {
+		t.Fatal("foreign use", w.Code, w.Body.String())
+	}
+	useBody["legal_entity_id"] = "foreign-entity"
+	if w := request("POST", usePath, tenant, useBody); w.Code != 404 {
+		t.Fatal("wrong entity", w.Code, w.Body.String())
+	}
+	useBody["legal_entity_id"] = entity.ID
+	for _, field := range []string{"tenant_id", "requested_by", "destination_wallet_id", "order_reference", "borrower_party_id"} {
+		useBody[field] = "forged"
+		if w := request("POST", usePath, tenant, useBody); w.Code != 400 {
+			t.Fatal(field, w.Code, w.Body.String())
+		}
+		delete(useBody, field)
+	}
+	var wg sync.WaitGroup
+	results := make(chan financial.GoodsUseRecord, 6)
+	for range 6 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			w := request("POST", usePath, tenant, useBody)
+			var reply struct {
+				Use         financial.GoodsUseRecord `json:"use"`
+				Environment string                   `json:"environment"`
+			}
+			if w.Code != 200 || json.Unmarshal(w.Body.Bytes(), &reply) != nil || reply.Use.Amount != "20.00" || reply.Use.Status != "posted" || reply.Use.DestinationWalletID != supplier.ID || reply.Use.BorrowerPartyID != "synthetic-buyer" || reply.Use.RequestedBy != p.Subject || reply.Environment != "sandbox" {
+				t.Error(w.Code, w.Body.String())
+				return
+			}
+			results <- reply.Use
+		}()
+	}
+	wg.Wait()
+	close(results)
+	transaction := ""
+	for result := range results {
+		if transaction != "" && transaction != result.TransactionID {
+			t.Fatal("duplicate effect")
+		}
+		transaction = result.TransactionID
+	}
+	if transaction == "" {
+		t.Fatal("no successful use")
+	}
+	useBody["amount"] = "21.00"
+	if w := request("POST", usePath, tenant, useBody); w.Code != 409 {
+		t.Fatal("changed replay", w.Code, w.Body.String())
+	}
+	for _, scope := range []string{tenant, "other-tenant"} {
+		w := request("GET", usePath+"/"+id+"?legal_entity_id="+entity.ID, scope, nil)
+		want := 200
+		if scope != tenant {
+			want = 404
+		}
+		if w.Code != want {
+			t.Fatal("use recovery", w.Code, w.Body.String())
+		}
+	}
+	c, e := s.ReadGoodsCapacity(ctx, tenant, entity.ID, id)
+	if e != nil || c.UsedAmount != "20.00" || c.RemainingAmount != "50.00" || c.UseCount != 1 {
+		t.Fatal("use capacity", c, e)
+	}
+	balance, err = s.GetBalance(ctx, entity.ID, tenant, supplier.ID)
+	if err != nil || balance.Ledger.StringFixed(2) != "20.00" {
+		t.Fatal("supplier posting", balance, err)
+	}
+	if err = db.QueryRow(ctx, `SELECT count(*) FROM outbox_events WHERE event_type='goods.credit.use.posted' AND payload->>'authorization_id'=$1`, id).Scan(&events); err != nil || events != 1 {
+		t.Fatal("use event", events, err)
 	}
 }

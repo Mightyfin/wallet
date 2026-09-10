@@ -12,7 +12,7 @@ import (
 )
 
 // GoodsAuthorization is an immutable execution instruction, not a credit decision.
-// No HTTP route exposes registration until Facility's approval handoff is wired.
+// Only dedicated internal workloads may register and execute this instruction.
 type GoodsAuthorization struct {
 	ID, TenantID, ReservationID, BorrowerPartyID, SupplierPartyID, DestinationWalletID, OrderReference, Amount, Currency, AuthorizedBy string
 	AllowPartialUse                                                                                                                    bool
