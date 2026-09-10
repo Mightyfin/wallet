@@ -78,15 +78,19 @@ func (s *Service) RecordSettledWithdrawal(ctx context.Context, in SettledWithdra
 		return Transaction{}, ErrConflict
 	}
 	var holdAmount, holdCurrency, holdStatus string
-	var holdExpired bool
-	err = tx.QueryRow(ctx, `SELECT amount::text,currency,status,(expires_at IS NOT NULL AND expires_at<=now()) FROM balance_holds WHERE wallet_id=$1 AND public_id=$2 FOR UPDATE`, walletUUID, in.HoldID).Scan(&holdAmount, &holdCurrency, &holdStatus, &holdExpired)
+	var holdExpiry *time.Time
+	err = tx.QueryRow(ctx, `SELECT amount::text,currency,status,expires_at FROM balance_holds WHERE wallet_id=$1 AND public_id=$2 FOR UPDATE`, walletUUID, in.HoldID).Scan(&holdAmount, &holdCurrency, &holdStatus, &holdExpiry)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Transaction{}, ErrNotFound
 	}
 	if err != nil {
 		return Transaction{}, err
 	}
-	if holdStatus != "active" || holdExpired || holdAmount != amount.StringFixed(2) || holdCurrency != in.Currency {
+	var captureAt time.Time
+	if err = tx.QueryRow(ctx, `SELECT clock_timestamp()`).Scan(&captureAt); err != nil {
+		return Transaction{}, err
+	}
+	if holdStatus != "active" || (holdExpiry != nil && !holdExpiry.After(captureAt)) || holdAmount != amount.StringFixed(2) || holdCurrency != in.Currency {
 		return Transaction{}, ErrConflict
 	}
 	result := Transaction{ID: newID("txn"), Status: "posted", Currency: in.Currency, IdempotencyKey: in.IdempotencyKey, CorrelationID: in.CorrelationID, Amount: amount}
@@ -98,7 +102,7 @@ func (s *Service) RecordSettledWithdrawal(ctx context.Context, in SettledWithdra
 	if _, err = tx.Exec(ctx, `INSERT INTO journal_entries(public_id,transaction_id,account_id,side,amount,currency) VALUES($1,$2,$3,'debit',$4,$5),($6,$2,$7,'credit',$4,$5)`, newID("ent"), transactionUUID, walletAccount, amount.StringFixed(2), in.Currency, newID("ent"), bankAccount); err != nil {
 		return Transaction{}, err
 	}
-	tag, err := tx.Exec(ctx, `UPDATE balance_holds SET status='captured',updated_at=now() WHERE wallet_id=$1 AND public_id=$2 AND status='active' AND (expires_at IS NULL OR expires_at>now())`, walletUUID, in.HoldID)
+	tag, err := tx.Exec(ctx, `UPDATE balance_holds SET status='captured',updated_at=now() WHERE wallet_id=$1 AND public_id=$2 AND status='active' AND (expires_at IS NULL OR expires_at>$3)`, walletUUID, in.HoldID, captureAt)
 	if err != nil {
 		return Transaction{}, err
 	}
