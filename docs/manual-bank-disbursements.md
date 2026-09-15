@@ -41,7 +41,15 @@ wallet cash stays zero, amount/payee/evidence/tenant changes are rejected,
 borrower mismatches fail, and an injected outbox failure rolls back the journal.
 Run against a disposable migrated database with `WALLET_LEDGER_TEST_DATABASE_URL`.
 
-Remaining: authenticated verified-payment adapter, service authorization,
+The internal POST endpoint `/v1/internal/loan-disbursements/external-bank`
+requires all of `wallet.disburse.external`, `manual-bank-reconciler` and
+`platform-tenant-delegator`, explicit acting tenant/application headers and
+`X-Expected-Environment` matching this deployment. Ordinary wallet administrator
+roles are not sufficient. The idempotency key must equal payment_id; body tenant
+and environment overrides are not accepted. Payment Rails supplies the reviewed
+instruction from its own store using its dedicated posting worker.
+
+Remaining: deployment of the authenticated adapter and service authorization,
 Facility confirmation/activation consumer, Billing & Collections intake,
 staff UI, deployment and Green end-to-end repayment/reconciliation UAT.
 The local function alone is not a production certification.

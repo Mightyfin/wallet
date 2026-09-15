@@ -20,6 +20,10 @@ func (a *api) goodsAuthority(w http.ResponseWriter, r *http.Request, scope strin
 }
 
 func (a *api) goodsWorkload(w http.ResponseWriter, r *http.Request, role, scope string) bool {
+	return a.financialWorkload(w, r, role, scope)
+}
+
+func (a *api) financialWorkload(w http.ResponseWriter, r *http.Request, role, scope string) bool {
 	p := principal(r)
 	w.Header().Set("Cache-Control", "no-store")
 	if !p.HasRole(role) || !p.HasRole("platform-tenant-delegator") || !p.HasScope(scope) ||
