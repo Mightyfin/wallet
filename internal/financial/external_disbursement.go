@@ -76,13 +76,16 @@ func (s *Service) RecordConfirmedBankDisbursement(ctx context.Context, in Confir
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return Transaction{}, err
 	}
+	// Retain the lender and borrower ownership checks through commit. Locking
+	// only the ledger accounts would allow a concurrent lender suspension or
+	// wallet ownership change after validation but before the journal is posted.
 	var entityUUID, receivable, bank string
 	err = tx.QueryRow(ctx, `SELECT le.id::text,ra.id::text,ba.id::text FROM legal_entities le
  JOIN wallets w ON w.legal_entity_id=le.id
  JOIN ledger_accounts ra ON ra.legal_entity_id=le.id AND ra.currency=w.currency AND ra.account_purpose='loan_receivable' AND ra.account_class='asset' AND ra.normal_side='debit' AND ra.status='active'
  JOIN ledger_accounts ba ON ba.legal_entity_id=le.id AND ba.currency=w.currency AND ba.account_purpose='bank_clearing' AND ba.account_class='asset' AND ba.normal_side='debit' AND ba.status='active'
  WHERE le.public_id=$1 AND le.status='active' AND w.public_id=$2 AND w.tenant_id=$3 AND w.owner_id=$4 AND w.currency=$5
- FOR UPDATE OF ra,ba`, in.LegalEntityID, in.WalletID, in.TenantID, in.PartyID, in.Currency).Scan(&entityUUID, &receivable, &bank)
+ FOR UPDATE OF ra,ba FOR SHARE OF le,w`, in.LegalEntityID, in.WalletID, in.TenantID, in.PartyID, in.Currency).Scan(&entityUUID, &receivable, &bank)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Transaction{}, ErrNotFound
 	}

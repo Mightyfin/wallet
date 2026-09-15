@@ -37,6 +37,28 @@ func TestConfirmedBankDisbursementNoWalletCashAndSinglePosting(t *testing.T) {
 	if _, err = s.FindConfirmedBankDisbursement(ctx, in); !errors.Is(err, ErrNotFound) {
 		t.Fatal("lookup invented a posting", err)
 	}
+	// An uncommitted suspension must serialize with a new posting, rather than
+	// letting the posting use an older active snapshot of the lender row.
+	blocking, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer blocking.Rollback(ctx)
+	if _, err = blocking.Exec(ctx, `UPDATE legal_entities SET status='suspended' WHERE public_id=$1`, le.ID); err != nil {
+		t.Fatal(err)
+	}
+	short, cancel := context.WithTimeout(ctx, 200*time.Millisecond)
+	_, blockedErr := s.RecordConfirmedBankDisbursement(short, in)
+	cancel()
+	if !errors.Is(blockedErr, context.DeadlineExceeded) {
+		t.Fatalf("posting did not wait for lender state change: %v", blockedErr)
+	}
+	if err = blocking.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.FindConfirmedBankDisbursement(ctx, in); !errors.Is(err, ErrNotFound) {
+		t.Fatal("timed-out lender check left a journal", err)
+	}
 	results := make(chan Transaction, 8)
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {
