@@ -35,7 +35,21 @@ func main() {
 		os.Exit(1)
 	}
 	defer pool.Close()
-	publisher, closeConnection, err := eventbus.NewPublisher(natsURL, strings.TrimSpace(os.Getenv("WALLET_LEDGER_NATS_TOKEN")), cfg.Environment)
+	var publisher *eventbus.Publisher
+	var closeConnection func()
+	user := strings.TrimSpace(os.Getenv("WALLET_LEDGER_NATS_USER"))
+	password := os.Getenv("WALLET_LEDGER_NATS_PASSWORD")
+	token := strings.TrimSpace(os.Getenv("WALLET_LEDGER_NATS_TOKEN"))
+	if user != "" || password != "" {
+		if token != "" {
+			logger.Error("event credentials are ambiguous; shared token must be unset")
+			os.Exit(1)
+		}
+		publisher, closeConnection, err = eventbus.NewPublisherWithCredentials(natsURL, user, password, cfg.Environment)
+	} else {
+		// Compatibility during the staged broker migration only.
+		publisher, closeConnection, err = eventbus.NewPublisher(natsURL, token, cfg.Environment)
+	}
 	if err != nil {
 		logger.Error("NATS unavailable", "error", err)
 		os.Exit(1)
