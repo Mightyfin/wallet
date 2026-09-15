@@ -31,3 +31,22 @@ changed same-scope instruction returns conflict. Results are not cacheable.
 HTTP authorization tests and vet passed. Endpoint and read scope have not yet
 been deployed/provisioned. Payment Rails lookup client and worker recovery remain
 outstanding; no new credential privileges were granted by this code change.
+# Lender-state posting serialization — 2026-09-15
+
+Manual bank posting now holds shared locks on the lender legal entity and
+borrower wallet rows alongside its ledger account locks until commit. This
+keeps lender status and wallet ownership/currency checks from becoming stale
+while a new journal is created. Exact historical journal lookup remains
+available after lender suspension and does not create another financial effect.
+
+A disposable PostgreSQL regression first reproduced the old behavior: an
+uncommitted lender suspension did not prevent a new journal. With the fix, the
+posting waits and its deadline leaves no journal. Rolling back the suspension
+allows the existing eight-concurrent-retry test to produce exactly one balanced
+K5,000 journal, one outbox event and no wallet cash. Three repeated runs passed
+from committed archive `77ac4b3`, excluding unrelated dirty worktree files.
+Financial and HTTP package tests and financial vet also passed from that archive.
+
+This is a synthetic database test, not Green's actual bank evidence or complete
+UAT. Remote Party membership/evidence safeguards and reviewer access remain
+separate; this change alone does not permit enabling the posting worker.
