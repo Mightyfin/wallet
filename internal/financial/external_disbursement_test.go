@@ -34,6 +34,9 @@ func TestConfirmedBankDisbursementNoWalletCashAndSinglePosting(t *testing.T) {
 	}
 	in := ConfirmedBankDisbursement{LegalEntityID: le.ID, TenantID: w.TenantID, Environment: "sandbox", WalletID: w.ID, PartyID: w.OwnerID, FacilityID: newID("fac"), PaymentID: newID("mpay"), AuthorizationID: newID("mba"), SourceAccountID: "synthetic-bank", DestinationAccountID: "synthetic-payee", EvidenceDigest: strings.Repeat("a", 64), ReviewedBy: "independent-synthetic-reviewer", AmountMinor: 500000, Currency: "ZMW", PaidAt: time.Now().UTC().Add(-time.Minute)}
 	var wg sync.WaitGroup
+	if _, err = s.FindConfirmedBankDisbursement(ctx, in); !errors.Is(err, ErrNotFound) {
+		t.Fatal("lookup invented a posting", err)
+	}
 	results := make(chan Transaction, 8)
 	errs := make(chan error, 8)
 	for i := 0; i < 8; i++ {
@@ -56,6 +59,12 @@ func TestConfirmedBankDisbursementNoWalletCashAndSinglePosting(t *testing.T) {
 		id = r.ID
 	}
 	balance, err := s.GetBalance(ctx, le.ID, w.TenantID, w.ID)
+	for i := 0; i < 3; i++ {
+		found, e := s.FindConfirmedBankDisbursement(ctx, in)
+		if e != nil || found.ID != id || found.Amount.StringFixed(2) != "5000.00" {
+			t.Fatal("existing posting recovery failed", found, e)
+		}
+	}
 	if err != nil || !balance.Available.IsZero() || !balance.Ledger.IsZero() {
 		t.Fatal("bank payment created wallet cash", balance, err)
 	}
@@ -87,6 +96,14 @@ func TestConfirmedBankDisbursementNoWalletCashAndSinglePosting(t *testing.T) {
 		if _, err = s.RecordConfirmedBankDisbursement(ctx, bad); !errors.Is(err, ErrConflict) {
 			t.Fatal("changed instruction replay", change, err)
 		}
+		_, lookupErr := s.FindConfirmedBankDisbursement(ctx, bad)
+		if change == "tenant" || change == "environment" {
+			if !errors.Is(lookupErr, ErrNotFound) {
+				t.Fatal("lookup leaked another scope", change, lookupErr)
+			}
+		} else if !errors.Is(lookupErr, ErrConflict) {
+			t.Fatal("lookup accepted changed instruction", change, lookupErr)
+		}
 	}
 	bad := in
 	bad.PaymentID = newID("mpay")
@@ -110,6 +127,12 @@ func TestConfirmedBankDisbursementNoWalletCashAndSinglePosting(t *testing.T) {
 	}
 	if err = pool.QueryRow(ctx, `SELECT count(*) FROM journal_transactions WHERE external_reference=$1`, failed.PaymentID).Scan(&count); err != nil || count != 0 {
 		t.Fatal("journal survived failed event", count, err)
+	}
+	if _, err = pool.Exec(ctx, `UPDATE legal_entities SET status='suspended' WHERE public_id=$1`, le.ID); err != nil {
+		t.Fatal(err)
+	}
+	if found, e := s.FindConfirmedBankDisbursement(ctx, in); e != nil || found.ID != id {
+		t.Fatal("historical recovery lost after suspension", e)
 	}
 }
 
