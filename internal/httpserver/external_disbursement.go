@@ -12,7 +12,17 @@ import (
 // Only the dedicated payment reconciliation workload can submit the verified
 // instruction. Ordinary wallet admin roles and tenant scopes are insufficient.
 func (a *api) recordConfirmedBankDisbursement(w http.ResponseWriter, r *http.Request) {
-	if !a.financialWorkload(w, r, "manual-bank-reconciler", "wallet.disburse.external") {
+	a.confirmedBankDisbursement(w, r, false)
+}
+func (a *api) findConfirmedBankDisbursement(w http.ResponseWriter, r *http.Request) {
+	a.confirmedBankDisbursement(w, r, true)
+}
+func (a *api) confirmedBankDisbursement(w http.ResponseWriter, r *http.Request, lookup bool) {
+	scope := "wallet.disburse.external"
+	if lookup {
+		scope = "wallet.disburse.external.read"
+	}
+	if !a.financialWorkload(w, r, "manual-bank-reconciler", scope) {
 		return
 	}
 	if r.Header.Get("X-Expected-Environment") != a.environment {
@@ -50,7 +60,17 @@ func (a *api) recordConfirmedBankDisbursement(w http.ResponseWriter, r *http.Req
 		return
 	}
 	p := principal(r)
-	result, err := a.financial.RecordConfirmedBankDisbursement(r.Context(), financial.ConfirmedBankDisbursement{LegalEntityID: in.LegalEntityID, TenantID: p.TenantID, Environment: p.Environment, WalletID: in.WalletID, PartyID: in.PartyID, FacilityID: in.FacilityID, PaymentID: in.PaymentID, AuthorizationID: in.AuthorizationID, SourceAccountID: in.SourceAccountID, DestinationAccountID: in.DestinationAccountID, EvidenceDigest: in.EvidenceDigest, ReviewedBy: in.ReviewedBy, AmountMinor: in.AmountMinor, Currency: in.Currency, PaidAt: in.PaidAt})
+	command := financial.ConfirmedBankDisbursement{LegalEntityID: in.LegalEntityID, TenantID: p.TenantID, Environment: p.Environment, WalletID: in.WalletID, PartyID: in.PartyID, FacilityID: in.FacilityID, PaymentID: in.PaymentID, AuthorizationID: in.AuthorizationID, SourceAccountID: in.SourceAccountID, DestinationAccountID: in.DestinationAccountID, EvidenceDigest: in.EvidenceDigest, ReviewedBy: in.ReviewedBy, AmountMinor: in.AmountMinor, Currency: in.Currency, PaidAt: in.PaidAt}
+	if lookup {
+		result, err := a.financial.FindConfirmedBankDisbursement(r.Context(), command)
+		if err != nil {
+			writeFinancialError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"transaction_id": result.ID, "status": result.Status, "currency": result.Currency, "amount": result.Amount.StringFixed(2), "idempotency_key": result.IdempotencyKey, "correlation_id": result.CorrelationID})
+		return
+	}
+	result, err := a.financial.RecordConfirmedBankDisbursement(r.Context(), command)
 	if err != nil {
 		writeFinancialError(w, err)
 		return

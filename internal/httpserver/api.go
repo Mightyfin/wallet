@@ -19,6 +19,7 @@ type api struct {
 func (a *api) routes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /v1/internal/legal-entities/{entity_id}", a.readLegalEntity)
 	mux.HandleFunc("POST /v1/internal/loan-disbursements/external-bank", a.recordConfirmedBankDisbursement)
+	mux.HandleFunc("POST /v1/internal/loan-disbursements/external-bank/lookup", a.findConfirmedBankDisbursement)
 	mux.HandleFunc("POST /v1/internal/goods-credit/authorizations", a.registerGoodsAuthorization)
 	mux.HandleFunc("GET /v1/internal/goods-credit/authorizations/{authorization_id}", a.readGoodsAuthorization)
 	mux.HandleFunc("GET /v1/internal/goods-credit/authorizations/{authorization_id}/capacity", a.readGoodsCapacity)

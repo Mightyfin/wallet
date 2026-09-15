@@ -17,3 +17,17 @@ Not deployed or exposed over HTTP yet. Remaining work: restricted read endpoint,
 Payment Rails client, and worker recovery before the new-posting guard. A lookup
 miss must not authorize new posting; unavailable/ambiguous responses must not be
 treated as a miss. Full Green UAT and live provider certification remain open.
+
+The read-only endpoint is now implemented as
+`POST /v1/internal/loan-disbursements/external-bank/lookup`, accepting the exact
+original command without creating an entry. POST keeps command/evidence values
+out of URL logs. It requires `manual-bank-reconciler`, platform delegation and
+the separate `wallet.disburse.external.read` scope. Tenant, application and
+environment must match authenticated context. Read scope cannot post; write-only
+scope cannot invoke lookup. Unknown body fields and query scope overrides fail.
+Success returns 200 with the existing transaction; no match returns 404 and a
+changed same-scope instruction returns conflict. Results are not cacheable.
+
+HTTP authorization tests and vet passed. Endpoint and read scope have not yet
+been deployed/provisioned. Payment Rails lookup client and worker recovery remain
+outstanding; no new credential privileges were granted by this code change.
