@@ -39,6 +39,16 @@ func authenticate(verifier auth.Verifier, disabled bool, next http.Handler) http
 		}
 		actingTenant := strings.TrimSpace(r.Header.Get("X-Acting-Tenant-Id"))
 		actingApplication := strings.TrimSpace(r.Header.Get("X-Acting-Application-Id"))
+		// This identity-only endpoint is global to the lender. Never manufacture
+		// a tenant context for it or broaden ordinary wallet delegation rules.
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/internal/legal-entities/") && strings.Count(strings.TrimPrefix(r.URL.Path, "/v1/internal/legal-entities/"), "/") == 0 {
+			if !legalEntityReader(p, r) {
+				writeJSON(w, http.StatusForbidden, map[string]string{"error": "forbidden"})
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), principalKey, p)))
+			return
+		}
 		if p.TenantID == "" {
 			if !p.HasRole("platform-tenant-delegator") || actingTenant == "" || actingApplication == "" || len(actingTenant) > 64 || len(actingApplication) > 64 {
 				writeJSON(w, http.StatusForbidden, map[string]string{"error": "delegation_forbidden"})
